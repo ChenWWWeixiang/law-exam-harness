@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>法考 AI 学习 Harness</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">📚 法考 AI Harness</div>
+    <nav class="nav" id="nav">
+      <a href="#home" data-route="home">首页</a>
+      <a href="#explain" data-route="explain">知识点咨询</a>
+      <a href="#generate" data-route="generate">生成例题</a>
+      <a href="#practice" data-route="practice">练习</a>
+      <a href="#grade" data-route="grade">主观题批改</a>
+      <a href="#history" data-route="history">历史记录</a>
+      <a href="#settings" data-route="settings">设置</a>
+    </nav>
+    <div class="status" id="status">检查中…</div>
+  </header>
+
+  <main id="main">
+
+    <!-- 首页 -->
+    <section class="view" data-view="home">
+      <h1>欢迎</h1>
+      <p class="muted" id="home-status">正在检查 API 配置…</p>
+      <div class="cards">
+        <a class="card" href="#explain">💬 知识点咨询</a>
+        <a class="card" href="#generate">📝 生成例题</a>
+        <a class="card" href="#practice">✏️ 开始练习</a>
+        <a class="card" href="#grade">✅ 主观题批改</a>
+        <a class="card" href="#history">📂 历史记录</a>
+        <a class="card" href="#settings">⚙️ 设置</a>
+      </div>
+    </section>
+
+    <!-- 知识点咨询 -->
+    <section class="view" data-view="explain" hidden>
+      <h1>知识点咨询</h1>
+      <div class="two-col">
+        <form id="form-explain" class="panel">
+          <label>科目
+            <select name="subject">
+              <option>不限科目</option>
+              <option>民法</option><option>刑法</option><option>行政法</option>
+              <option>民事诉讼法</option><option>刑事诉讼法</option>
+              <option>商经法</option><option>理论法</option><option>三国法</option>
+            </select>
+          </label>
+          <label>回答风格
+            <select name="style">
+              <option>简明解释</option>
+              <option>深入讲解</option>
+              <option>举例说明</option>
+              <option selected>法考应试角度</option>
+            </select>
+          </label>
+          <label>问题
+            <textarea name="question" rows="4" required placeholder="例如:无权处分和善意取得有什么区别?"></textarea>
+          </label>
+          <label class="row"><input type="checkbox" name="webSearch" /> 启用联网搜索</label>
+          <div class="actions">
+            <button type="submit">提问</button>
+            <button type="button" data-action="generate-from-topic">一键生成相关例题</button>
+          </div>
+        </form>
+        <div class="panel">
+          <h3>回答</h3>
+          <div id="explain-output" class="output">
+            <p class="muted">回答会显示在这里</p>
+          </div>
+          <h3>继续追问</h3>
+          <form id="form-explain-followup" class="row">
+            <input name="question" placeholder="基于上文继续追问…" />
+            <button type="submit">追问</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- 例题生成 -->
+    <section class="view" data-view="generate" hidden>
+      <h1>生成例题</h1>
+      <form id="form-generate" class="panel">
+        <div class="grid-2">
+          <label>科目
+            <select name="subject">
+              <option>不限科目</option><option>民法</option><option>刑法</option>
+              <option>行政法</option><option>民事诉讼法</option>
+              <option>刑事诉讼法</option><option>商经法</option>
+              <option>理论法</option><option>三国法</option>
+            </select>
+          </label>
+          <label>知识点 <input name="topic" placeholder="如:共同犯罪" required /></label>
+          <label>题型
+            <select name="questionType">
+              <option>单选题</option><option>多选题</option><option>不定项选择题</option>
+              <option>判断题</option><option>简答题</option>
+              <option selected>案例分析题</option><option>主观论述题</option>
+            </select>
+          </label>
+          <label>难度
+            <select name="difficulty">
+              <option>入门</option><option>基础</option>
+              <option selected>中等</option><option>偏难</option><option>冲刺</option>
+            </select>
+          </label>
+          <label>数量 <input name="count" type="number" min="1" max="10" value="3" /></label>
+          <label class="row"><input type="checkbox" name="avoidDuplicate" checked /> 避免与历史题重复</label>
+        </div>
+        <div class="actions"><button type="submit">生成</button></div>
+      </form>
+      <div id="generate-output" class="output"></div>
+    </section>
+
+    <!-- 练习 -->
+    <section class="view" data-view="practice" hidden>
+      <h1>练习</h1>
+      <div id="practice-empty" class="panel muted">尚未选题。<a href="#generate">先去生成题目</a>,或从「历史记录」挑选一道。</div>
+      <div id="practice-area" hidden>
+        <div class="panel">
+          <div class="meta" id="practice-meta"></div>
+          <h3 id="practice-stem"></h3>
+          <div id="practice-options" class="options"></div>
+          <label>你的答案
+            <textarea id="practice-answer" rows="5"></textarea>
+          </label>
+          <div class="actions">
+            <button id="btn-submit-practice">提交批改</button>
+            <button id="btn-next-practice" type="button">下一题</button>
+          </div>
+        </div>
+        <div id="practice-feedback" class="panel" hidden>
+          <h3>批改结果</h3>
+          <div id="practice-feedback-body"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 主观题批改 -->
+    <section class="view" data-view="grade" hidden>
+      <h1>主观题批改</h1>
+      <form id="form-grade" class="panel">
+        <div class="grid-2">
+          <label>科目
+            <select name="subject">
+              <option>不限科目</option><option>民法</option><option>刑法</option>
+              <option>行政法</option><option>民事诉讼法</option>
+              <option>刑事诉讼法</option><option>商经法</option>
+              <option>理论法</option><option>三国法</option>
+            </select>
+          </label>
+          <label>题型
+            <select name="questionType">
+              <option>简答题</option><option selected>案例分析题</option>
+              <option>主观论述题</option>
+            </select>
+          </label>
+          <label>满分 <input name="maxScore" type="number" min="1" max="100" value="20" /></label>
+        </div>
+        <label>题目 <textarea name="stem" rows="4" required></textarea></label>
+        <label>你的答案 <textarea name="userAnswer" rows="6" required></textarea></label>
+        <label>评分标准 / 补充说明(可选)
+          <textarea name="rubric" rows="3" placeholder="可不填;若填写,AI 会按此标准重点批改"></textarea>
+        </label>
+        <label class="row"><input type="checkbox" name="addToMistakes" /> 加入错题本</label>
+        <div class="actions"><button type="submit">提交批改</button></div>
+      </form>
+      <div id="grade-output" class="panel" hidden>
+        <h3>批改结果</h3>
+        <div id="grade-feedback-body"></div>
+      </div>
+    </section>
+
+    <!-- 历史记录 -->
+    <section class="view" data-view="history" hidden>
+      <h1>历史记录</h1>
+      <div class="tabs">
+        <button data-tab="questions" class="tab active">生成题目</button>
+        <button data-tab="answers" class="tab">答题记录</button>
+        <button data-tab="mistakes" class="tab">错题</button>
+        <button data-tab="sessions" class="tab">聊天</button>
+        <button id="btn-refresh-history" type="button" class="muted">刷新</button>
+      </div>
+      <div id="history-list" class="panel"></div>
+    </section>
+
+    <!-- 设置 -->
+    <section class="view" data-view="settings" hidden>
+      <h1>设置</h1>
+      <form id="form-config" class="panel">
+        <label>API Base URL <input name="apiBaseUrl" placeholder="https://api.openai.com/v1" required /></label>
+        <label>API Key
+          <input name="apiKey" type="password" placeholder="留空表示不修改已保存的 key" autocomplete="off" />
+        </label>
+        <label>模型 <input name="model" placeholder="如 gpt-4o-mini / claude-opus-4-7 / gemini-1.5-pro" required /></label>
+        <div class="grid-2">
+          <label>Temperature <input name="temperature" type="number" step="0.1" min="0" max="2" value="0.3" /></label>
+          <label>Max Tokens <input name="maxTokens" type="number" min="100" value="4000" /></label>
+        </div>
+        <h3>联网搜索</h3>
+        <label class="row"><input type="checkbox" name="webSearchEnabled" /> 启用联网搜索</label>
+        <label>Provider <input name="webSearchProvider" value="tavily" /></label>
+        <label>WebSearch API Key
+          <input name="webSearchApiKey" type="password" placeholder="留空表示不修改" autocomplete="off" />
+        </label>
+        <h3>默认值</h3>
+        <div class="grid-2">
+          <label>默认科目 <input name="defaultSubject" value="不限科目" /></label>
+          <label>默认题型 <input name="defaultQuestionType" value="案例分析题" /></label>
+          <label>默认难度 <input name="defaultDifficulty" value="中等" /></label>
+        </div>
+        <div class="actions">
+          <button type="submit">保存</button>
+          <button id="btn-test-ai" type="button">测试连接</button>
+        </div>
+        <div id="config-msg" class="muted"></div>
+      </form>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

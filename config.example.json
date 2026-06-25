@@ -1,0 +1,13 @@
+{
+  "apiBaseUrl": "https://api.openai.com/v1",
+  "apiKey": "",
+  "model": "gpt-4o-mini",
+  "temperature": 0.3,
+  "maxTokens": 4000,
+  "webSearchEnabled": false,
+  "webSearchProvider": "tavily",
+  "webSearchApiKey": "",
+  "defaultSubject": "不限科目",
+  "defaultQuestionType": "案例分析题",
+  "defaultDifficulty": "中等"
+}

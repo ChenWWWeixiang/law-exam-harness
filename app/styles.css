@@ -1,0 +1,169 @@
+/* 法考 AI 学习 Harness - 样式
+   设计目标:极简,无外部 CDN 依赖,响应式两栏 / 单栏 */
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  font-family: -apple-system, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 15px;
+  color: #1d1d1f;
+  background: #f5f5f7;
+  line-height: 1.55;
+}
+
+/* 顶栏 */
+.topbar {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; gap: 18px;
+  padding: 10px 18px;
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: saturate(180%) blur(12px);
+  border-bottom: 1px solid #e5e5ea;
+}
+.brand { font-weight: 700; font-size: 16px; }
+.nav { display: flex; gap: 4px; flex-wrap: wrap; }
+.nav a {
+  text-decoration: none; color: #1d1d1f;
+  padding: 4px 10px; border-radius: 6px;
+  font-size: 14px;
+}
+.nav a:hover { background: #e9e9ef; }
+.nav a.active { background: #0a84ff; color: white; }
+.status { margin-left: auto; font-size: 13px; padding: 4px 10px; border-radius: 999px; }
+.status.ok { background: #d1f5d3; color: #1d6f1d; }
+.status.warn { background: #fff3c4; color: #8a6d00; }
+.status.err { background: #ffd6d6; color: #b00020; }
+
+/* 主区域 */
+main {
+  max-width: 1100px; margin: 0 auto;
+  padding: 20px 18px 80px;
+}
+h1 { font-size: 22px; margin: 0 0 16px; }
+h3 { font-size: 16px; margin: 18px 0 8px; }
+h4 { font-size: 14px; margin: 14px 0 6px; color: #444; }
+p { margin: 6px 0; }
+.muted { color: #6e6e73; font-size: 13px; }
+
+/* 卡片 / 面板 */
+.panel {
+  background: white;
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.card {
+  display: block; padding: 20px;
+  background: white; border-radius: 12px;
+  text-decoration: none; color: #1d1d1f;
+  font-size: 16px; text-align: center;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  transition: transform 0.1s;
+}
+.card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+
+/* 表单 */
+label { display: block; margin: 10px 0; font-size: 13px; color: #444; }
+label.row { display: flex; align-items: center; gap: 6px; }
+input, select, textarea {
+  display: block; width: 100%;
+  padding: 8px 10px; margin-top: 4px;
+  border: 1px solid #d2d2d7; border-radius: 8px;
+  font: inherit; background: white;
+}
+textarea { resize: vertical; font-family: inherit; }
+input[type="checkbox"] { width: auto; margin-top: 0; display: inline-block; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 600px) { .grid-2 { grid-template-columns: 1fr; } }
+
+/* 按钮 */
+button {
+  background: #0a84ff; color: white;
+  border: none; padding: 8px 16px;
+  border-radius: 8px; font: inherit; cursor: pointer;
+}
+button:hover { opacity: 0.9; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* 两栏 */
+.two-col {
+  display: grid; grid-template-columns: 360px 1fr; gap: 14px;
+}
+@media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+/* 输出区 */
+.output { min-height: 60px; }
+.output p { margin: 6px 0; }
+.callout {
+  background: #f0f7ff; border-left: 3px solid #0a84ff;
+  padding: 10px 12px; border-radius: 4px;
+  margin-bottom: 12px;
+}
+.warn {
+  background: #fff8e1; border-left: 3px solid #ffb300;
+  padding: 10px 12px; border-radius: 4px;
+  margin: 10px 0;
+}
+.error {
+  background: #ffe6e6; color: #b00020;
+  padding: 10px 12px; border-radius: 6px;
+  border-left: 3px solid #b00020;
+}
+
+/* 题目卡片 */
+.qcard, .hcard {
+  background: white; border-radius: 12px; padding: 14px 16px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.qcard header, .hcard header {
+  display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px;
+}
+.badge {
+  display: inline-block;
+  padding: 2px 8px; border-radius: 999px;
+  background: #eef0f5; color: #555; font-size: 12px;
+}
+.stem { margin: 8px 0; }
+.opts { padding-left: 22px; }
+details summary { cursor: pointer; color: #0a84ff; padding: 4px 0; }
+
+/* 分数 */
+.score-line {
+  font-size: 18px; font-weight: 600;
+  padding: 8px 0; border-bottom: 1px solid #e5e5ea;
+}
+
+/* Tab */
+.tabs { display: flex; gap: 4px; margin-bottom: 12px; align-items: center; }
+.tab {
+  background: transparent; color: #1d1d1f;
+  padding: 6px 12px; border-radius: 6px;
+}
+.tab.active { background: #0a84ff; color: white; }
+
+/* Toast */
+.toast {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  padding: 10px 16px; border-radius: 8px;
+  background: rgba(0,0,0,0.85); color: white;
+  font-size: 14px; z-index: 100;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+.toast.ok { background: #1d6f1d; }
+.toast.error { background: #b00020; }
+.toast.warn { background: #8a6d00; }
+
+code {
+  background: #eef0f5; padding: 1px 5px; border-radius: 3px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+}
