@@ -18,7 +18,16 @@
       <a href="#history" data-route="history">历史记录</a>
       <a href="#settings" data-route="settings">设置</a>
     </nav>
-    <div class="status" id="status">检查中…</div>
+    <div class="topbar-right">
+      <label class="model-select-label">
+        模型
+        <select id="model-select">
+          <option value="deepseek-v4-flash">deepseek-v4-flash(快)</option>
+          <option value="deepseek-v4-pro">deepseek-v4-pro(强+多模态)</option>
+        </select>
+      </label>
+      <div class="status" id="status">检查中…</div>
+    </div>
   </header>
 
   <main id="main">
@@ -59,9 +68,15 @@
             </select>
           </label>
           <label>问题
-            <textarea name="question" rows="4" required placeholder="例如:无权处分和善意取得有什么区别?"></textarea>
+            <textarea id="explain-question" name="question" rows="4" required placeholder="例如:无权处分和善意取得有什么区别?(支持粘贴截图)"></textarea>
           </label>
+          <label class="row">
+            <input type="file" id="explain-image" accept="image/*" multiple />
+            <span class="muted">上传题目截图(可粘贴),需模型支持多模态</span>
+          </label>
+          <div id="explain-image-preview" class="image-preview"></div>
           <label class="row"><input type="checkbox" name="webSearch" /> 启用联网搜索</label>
+          <label class="row"><input type="checkbox" name="extremeThinking" /> 🧠 超长思考(慢但更准)</label>
           <div class="actions">
             <button type="submit">提问</button>
             <button type="button" data-action="generate-from-topic">一键生成相关例题</button>
@@ -110,32 +125,173 @@
           </label>
           <label>数量 <input name="count" type="number" min="1" max="10" value="3" /></label>
           <label class="row"><input type="checkbox" name="avoidDuplicate" checked /> 避免与历史题重复</label>
+          <label class="row"><input type="checkbox" name="extremeThinking" /> 🧠 超长思考(慢但更准)</label>
         </div>
         <div class="actions"><button type="submit">生成</button></div>
       </form>
       <div id="generate-output" class="output"></div>
     </section>
 
-    <!-- 练习 -->
+    <!-- 练习(拆分为两个子页面) -->
     <section class="view" data-view="practice" hidden>
       <h1>练习</h1>
-      <div id="practice-empty" class="panel muted">尚未选题。<a href="#generate">先去生成题目</a>,或从「历史记录」挑选一道。</div>
-      <div id="practice-area" hidden>
-        <div class="panel">
-          <div class="meta" id="practice-meta"></div>
-          <h3 id="practice-stem"></h3>
-          <div id="practice-options" class="options"></div>
-          <label>你的答案
-            <textarea id="practice-answer" rows="5"></textarea>
-          </label>
-          <div class="actions">
-            <button id="btn-submit-practice">提交批改</button>
-            <button id="btn-next-practice" type="button">下一题</button>
+      <div class="tabs">
+        <button class="tab active" data-practice-tab="free">自由练习</button>
+        <button class="tab" data-practice-tab="exam">📝 模拟考试</button>
+      </div>
+
+      <!-- 子页面 1:自由练习 -->
+      <div id="practice-free" class="practice-subview">
+        <div id="practice-empty" class="panel muted">尚未选题。<a href="#generate">先去生成题目</a>,或从「历史记录」挑选一道。</div>
+        <div id="practice-area" hidden>
+          <div class="panel">
+            <div class="meta" id="practice-meta"></div>
+            <h3 id="practice-stem"></h3>
+            <div id="practice-options" class="options"></div>
+            <label>你的答案
+              <textarea id="practice-answer" rows="5"></textarea>
+            </label>
+            <label class="row">
+              <input type="file" id="practice-image" accept="image/*" multiple />
+              <span class="muted">可上传截图</span>
+            </label>
+            <div id="practice-image-preview" class="image-preview"></div>
+            <div class="actions">
+              <button id="btn-submit-practice">提交批改</button>
+              <button id="btn-next-practice" type="button">下一题</button>
+            </div>
+          </div>
+          <div id="practice-feedback" class="panel" hidden>
+            <h3>批改结果</h3>
+            <div id="practice-feedback-body"></div>
           </div>
         </div>
-        <div id="practice-feedback" class="panel" hidden>
-          <h3>批改结果</h3>
-          <div id="practice-feedback-body"></div>
+      </div>
+
+      <!-- 子页面 2:模拟考试 -->
+      <div id="practice-exam" class="practice-subview" hidden>
+        <!-- Step 1: 配置 -->
+        <div id="exam-setup" class="panel">
+          <div class="row" style="display:flex;justify-content:space-between;align-items:center;">
+            <h3 style="margin:0;">📝 配置模拟卷</h3>
+            <button id="btn-exam-show-history" type="button" class="muted">📚 加载历史试卷</button>
+          </div>
+          <div class="grid-2">
+            <label>科目
+              <select id="exam-subject">
+                <option>民法</option><option>刑法</option>
+                <option>行政法</option><option>民事诉讼法</option>
+                <option>刑事诉讼法</option><option>商经法</option>
+                <option>理论法</option><option>三国法</option>
+              </select>
+            </label>
+            <label>考试时长(分钟) <input id="exam-duration" type="number" value="90" min="10" max="300" /></label>
+            <label>单选题数 <input id="exam-single" type="number" value="8" min="0" max="20" /></label>
+            <label>多选题数 <input id="exam-multi" type="number" value="4" min="0" max="10" /></label>
+            <label>简答题数 <input id="exam-essay" type="number" value="3" min="0" max="10" /></label>
+            <label class="row"><input type="checkbox" id="exam-extreme" /> 🧠 超长思考</label>
+          </div>
+          <p class="muted">⚠️ 一次生成会消耗较多 token(约 {单选×0.5 + 多选×1 + 简答×3}k)。生成后落盘到本地,答完才扣分。</p>
+          <div class="actions">
+            <button id="btn-exam-generate" type="button">生成模拟卷</button>
+          </div>
+          <div id="exam-setup-msg" class="muted"></div>
+        </div>
+
+        <!-- 历史试卷列表(配置页下方) -->
+        <div id="exam-history" class="panel" hidden>
+          <h3>📚 历史试卷</h3>
+          <p class="muted">已生成过的试卷可以直接加载,免去再次生成 token。</p>
+          <div id="exam-history-list"></div>
+        </div>
+
+        <!-- Step 1.5: 生成后确认页(未计时) -->
+        <div id="exam-confirm" class="panel" hidden>
+          <h3>✅ 试卷已就绪</h3>
+          <div id="exam-confirm-meta" class="exam-score-summary"></div>
+          <h4>题型预览</h4>
+          <ol id="exam-confirm-toc"></ol>
+          <p class="muted">⏱ 点击「开始作答」后才会启动倒计时。</p>
+          <div class="actions">
+            <button id="btn-exam-start" type="button">▶ 开始作答</button>
+            <button id="btn-exam-back-from-confirm" type="button">取消</button>
+          </div>
+        </div>
+
+        <!-- Step 2: 答卷(翻页) -->
+        <div id="exam-paper" hidden>
+          <div class="exam-header panel">
+            <div>
+              <strong id="exam-paper-title">模拟卷</strong>
+              <span class="muted" id="exam-paper-meta"></span>
+            </div>
+            <div class="exam-timer">
+              剩余 <strong id="exam-timer">--:--</strong>
+              <span class="muted" id="exam-timer-total"></span>
+            </div>
+          </div>
+
+          <div id="exam-question-area" class="panel">
+            <div class="exam-question-header">
+              第 <span id="exam-q-no">1</span> / <span id="exam-q-total">15</span> 题
+              <span class="badge" id="exam-q-type"></span>
+              <span class="muted">本题停留 <span id="exam-q-dur">0</span>s</span>
+            </div>
+            <h3 id="exam-q-stem"></h3>
+            <div id="exam-q-options" class="options"></div>
+            <label>你的答案
+              <textarea id="exam-q-answer" rows="6"></textarea>
+            </label>
+            <div class="actions exam-nav">
+              <button id="btn-exam-prev" type="button">← 上一题</button>
+              <span class="muted" id="exam-q-progress">已答 0 / 15</span>
+              <button id="btn-exam-next" type="button">下一题 →</button>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button id="btn-exam-submit" type="button">交卷</button>
+          </div>
+        </div>
+
+        <!-- Step 3: 结果 -->
+        <div id="exam-result" class="panel" hidden>
+          <h3>🎯 成绩单</h3>
+          <div class="exam-score-summary">
+            <div>总分 <strong id="exam-total-score">0</strong> / <span id="exam-total-max">0</span></div>
+            <div>正确率 <strong id="exam-total-pct">0</strong>%</div>
+            <div>用时 <strong id="exam-total-dur">0</strong>s</div>
+            <div id="exam-time-up-banner" class="warn" hidden>⏰ 考试时间已到,系统提示后您仍然提交了答卷。</div>
+          </div>
+          <h4>逐题详情</h4>
+          <div id="exam-results-list"></div>
+          <div class="actions">
+            <button id="btn-exam-back-setup" type="button">再考一次</button>
+            <button id="btn-exam-review" type="button">📊 复盘/统计</button>
+          </div>
+        </div>
+
+        <!-- 复盘区:历史考试 + 正确率统计 -->
+        <div id="exam-review" class="panel" hidden>
+          <h3>📊 考试复盘</h3>
+          <div class="tabs">
+            <button class="tab active" data-review-tab="attempts">考试记录</button>
+            <button class="tab" data-review-tab="stats">正确率统计</button>
+          </div>
+
+          <div id="review-attempts" class="review-subview">
+            <div id="review-attempts-list"></div>
+          </div>
+
+          <div id="review-stats" class="review-subview" hidden>
+            <div id="review-stats-summary"></div>
+            <h4>按题型</h4>
+            <table class="stats-table" id="review-stats-type"></table>
+            <h4>按考点</h4>
+            <table class="stats-table" id="review-stats-topic"></table>
+            <h4>按科目</h4>
+            <table class="stats-table" id="review-stats-subject"></table>
+          </div>
         </div>
       </div>
     </section>
@@ -162,11 +318,17 @@
           <label>满分 <input name="maxScore" type="number" min="1" max="100" value="20" /></label>
         </div>
         <label>题目 <textarea name="stem" rows="4" required></textarea></label>
-        <label>你的答案 <textarea name="userAnswer" rows="6" required></textarea></label>
+        <label>你的答案 <textarea id="grade-userAnswer" name="userAnswer" rows="6" required></textarea></label>
+          <label class="row">
+            <input type="file" id="grade-image" accept="image/*" multiple />
+            <span class="muted">支持上传截图(自动 base64 发送)</span>
+          </label>
+          <div id="grade-image-preview" class="image-preview"></div>
         <label>评分标准 / 补充说明(可选)
           <textarea name="rubric" rows="3" placeholder="可不填;若填写,AI 会按此标准重点批改"></textarea>
         </label>
         <label class="row"><input type="checkbox" name="addToMistakes" /> 加入错题本</label>
+        <label class="row"><input type="checkbox" name="extremeThinking" /> 🧠 超长思考(慢但更准)</label>
         <div class="actions"><button type="submit">提交批改</button></div>
       </form>
       <div id="grade-output" class="panel" hidden>
@@ -196,7 +358,7 @@
         <label>API Key
           <input name="apiKey" type="password" placeholder="留空表示不修改已保存的 key" autocomplete="off" />
         </label>
-        <label>模型 <input name="model" placeholder="如 gpt-4o-mini / claude-opus-4-7 / gemini-1.5-pro" required /></label>
+        <label>模型 <input id="model-input" name="model" placeholder="如 gpt-4o-mini / claude-opus-4-7 / gemini-1.5-pro" required /></label>
         <div class="grid-2">
           <label>Temperature <input name="temperature" type="number" step="0.1" min="0" max="2" value="0.3" /></label>
           <label>Max Tokens <input name="maxTokens" type="number" min="100" value="4000" /></label>

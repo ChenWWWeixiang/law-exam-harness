@@ -208,11 +208,16 @@ document.getElementById('form-explain').addEventListener('submit', async (ev) =>
   out.innerHTML = '<p class="muted">AI 正在思考…</p>';
   if (!state.conversationId) state.conversationId = 'session_' + Date.now();
   try {
+    const userQuestion = await collectAnswerParts('explain-image', f.question.value);
+    const payload = (userQuestion.length === 1 && typeof userQuestion[0] === 'string' && !userQuestion[0].startsWith('data:image'))
+      ? userQuestion[0]
+      : userQuestion;
     const r = await api('POST', '/api/chat', {
       subject: f.subject.value,
       style: f.style.value,
-      question: f.question.value,
+      question: payload,
       webSearch: f.webSearch.checked,
+      extremeThinking: f.extremeThinking && f.extremeThinking.checked,
       conversationId: state.conversationId,
     });
     out.innerHTML = renderChatAnswer(r);
@@ -246,6 +251,13 @@ document.getElementById('form-explain-followup').addEventListener('submit', asyn
 
 function renderChatAnswer(r, isFollowup) {
   let html = '';
+  if (r.isRelevant === false) {
+    html += '<div class="reject-banner">🚫 ' + escapeHtml(r.answer || '这个问题与法考无关') + '</div>';
+    return html;
+  }
+  if (r.extremeThinking) {
+    html += '<div class="warn">🧠 已启用超长思考模式,本次思考消耗 ' + (r.reasoning_tokens || 0) + ' tokens,响应可能较慢。</div>';
+  }
   if (!isFollowup && r.summary) html += `<div class="callout">${renderMarkdownLite(r.summary)}</div>`;
   html += renderMarkdownLite(r.answer || '');
   if (r.pitfalls && r.pitfalls.length) {
@@ -262,7 +274,106 @@ function renderChatAnswer(r, isFollowup) {
   if (r.warnings && r.warnings.length) {
     html += '<div class="warn">' + r.warnings.map(w => escapeHtml(w)).join('；') + '</div>';
   }
+  if (r.warning && !r.warnings) {
+    html += '<div class="warn">' + escapeHtml(r.warning) + '</div>';
+  }
+  // 思考链折叠面板
+  if (r.reasoning_content) {
+    html += renderReasoningPanel(r.reasoning_content, r.reasoning_tokens);
+  }
   return html;
+}
+
+function renderReasoningPanel(reasoning, tokens) {
+  const head = tokens ? `🧠 AI 思考过程(消耗 ${tokens} tokens)` : '🧠 AI 思考过程';
+  return `<details class="reasoning"><summary>${escapeHtml(head)}</summary><pre>${escapeHtml(reasoning)}</pre></details>`;
+}
+
+// ---- 图片上传辅助:把 <input type=file> 的文件转 base64 data URL,组成 userAnswer 数组 ----
+async function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function collectAnswerParts(fileInputId, text) {
+  const parts = [];
+  if (text && text.trim()) parts.push(text.trim());
+  const input = document.getElementById(fileInputId);
+  if (input && input.files && input.files.length) {
+    for (const f of input.files) {
+      if (!f.type.startsWith('image/')) continue;
+      try {
+        const url = await fileToDataUrl(f);
+        parts.push(url);
+      } catch (e) {
+        console.warn('图片读取失败', e);
+      }
+    }
+  }
+  return parts;
+}
+
+function bindImagePreview(fileInputId, previewId) {
+  const input = document.getElementById(fileInputId);
+  const preview = document.getElementById(previewId);
+  if (!input || !preview) return;
+  input.addEventListener('change', async () => refreshImagePreview(input, preview));
+}
+
+// ---- 粘贴截图支持 ----
+// 在 textarea 上监听 paste 事件,如果粘贴的是图片文件,自动加到 file input 并预览。
+// 浏览器 clipboard API: e.clipboardData.items,kind=file 且 type=image/* 时是图片。
+async function handlePasteImages(ev, fileInputId, previewId) {
+  const items = ev.clipboardData && ev.clipboardData.items;
+  if (!items || !items.length) return;
+  let anyImage = false;
+  for (const item of items) {
+    if (item.kind !== 'file') continue;
+    if (!item.type.startsWith('image/')) continue;
+    const file = item.getAsFile();
+    if (!file) continue;
+    // 把 file 加到对应 file input
+    const input = document.getElementById(fileInputId);
+    if (input) {
+      const dt = new DataTransfer();
+      // 保留已有文件
+      if (input.files) for (const f of input.files) dt.items.add(f);
+      dt.items.add(file);
+      input.files = dt.files;
+    }
+    anyImage = true;
+    ev.preventDefault();
+  }
+  if (anyImage) {
+    const input = document.getElementById(fileInputId);
+    const preview = document.getElementById(previewId);
+    if (input && preview) await refreshImagePreview(input, preview);
+    toast('已粘贴图片', 'ok');
+  }
+}
+
+async function refreshImagePreview(input, preview) {
+  preview.innerHTML = '';
+  if (!input.files || !input.files.length) return;
+  for (const f of input.files) {
+    if (!f.type.startsWith('image/')) continue;
+    const url = await fileToDataUrl(f);
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = f.name;
+    preview.appendChild(img);
+  }
+}
+
+// 给指定 textarea 绑定粘贴
+function bindPasteOnTextarea(textareaId, fileInputId, previewId) {
+  const ta = document.getElementById(textareaId);
+  if (!ta) return;
+  ta.addEventListener('paste', (ev) => handlePasteImages(ev, fileInputId, previewId));
 }
 
 // ---- 例题生成 ----
@@ -279,6 +390,7 @@ document.getElementById('form-generate').addEventListener('submit', async (ev) =
       difficulty: f.difficulty.value,
       count: parseInt(f.count.value, 10) || 1,
       avoidDuplicate: f.avoidDuplicate.checked,
+      extremeThinking: f.extremeThinking && f.extremeThinking.checked,
     });
     state._generatedQuestions = r.questions || [];
     out.innerHTML = renderQuestions(state._generatedQuestions);
@@ -290,15 +402,15 @@ document.getElementById('form-generate').addEventListener('submit', async (ev) =
 
 document.querySelector('[data-action="generate-from-topic"]').addEventListener('click', async () => {
   const f = document.getElementById('form-explain');
-  if (!f.topic || !f.question.value) {
-    toast('需要先填写知识点或问题', 'warn');
+  if (!f.question.value || !f.question.value.trim()) {
+    toast('请先在上方「问题」框里填写内容,再生成相关例题', 'warn');
     return;
   }
-  // 简单复用知识点作为 topic
+  // 把当前问题当作 topic,跳到生成页后预填并自动提交
   location.hash = '#generate';
   setTimeout(() => {
     const g = document.getElementById('form-generate');
-    g.topic.value = f.question.value.slice(0, 30);
+    g.topic.value = f.question.value.trim().slice(0, 30);
     g.subject.value = f.subject.value;
     g.requestSubmit();
   }, 50);
@@ -326,6 +438,9 @@ function renderQuestions(questions) {
           ? '<p><strong>考点:</strong></p><ul>' + q.keyPoints.map(k => `<li>${escapeHtml(k)}</li>`).join('') + '</ul>' : ''}
         ${q.pitfalls && q.pitfalls.length
           ? '<p><strong>易错点:</strong></p><ul>' + q.pitfalls.map(p => `<li>${escapeHtml(p)}</li>`).join('') + '</ul>' : ''}
+        ${q.reasoning_content
+          ? renderReasoningPanel(q.reasoning_content, q.reasoning_tokens)
+          : ''}
       </details>
       <div class="actions">
         <button class="btn-practice" data-idx="${i}">开始作答</button>
@@ -389,17 +504,17 @@ function renderPractice() {
 
 document.getElementById('btn-submit-practice').addEventListener('click', async () => {
   const q = state.currentQuestion;
-  const userAnswer = document.getElementById('practice-answer').value.trim();
   if (!q) return;
-  if (!userAnswer) { toast('请填写答案', 'warn'); return; }
+  const text = document.getElementById('practice-answer').value.trim();
   const fb = document.getElementById('practice-feedback');
   const body = document.getElementById('practice-feedback-body');
   fb.hidden = false;
   body.innerHTML = '<p class="muted">批改中…</p>';
   try {
+    const userAnswerParts = await collectAnswerParts('practice-image', text);
     const r = await api('POST', '/api/grade-answer', {
       question: q,
-      userAnswer,
+      userAnswer: userAnswerParts,
       maxScore: 20,
     });
     body.innerHTML = renderFeedback(r.feedback);
@@ -420,20 +535,44 @@ document.getElementById('btn-next-practice').addEventListener('click', () => {
 
 function renderFeedback(f) {
   if (!f) return '';
+  if (f.isRelevant === false) {
+    return '<div class="reject-banner">🚫 ' + escapeHtml(f.verdict || '本题与法考/法律学习无关,无法批改') + '</div>';
+  }
   const pct = f.maxScore ? Math.round((f.score / f.maxScore) * 100) : 0;
-  return `
-    <div class="score-line">得分: <strong>${f.score}</strong> / ${f.maxScore} (${pct}%) — ${escapeHtml(f.verdict || '')}</div>
-    ${f.earnedPoints && f.earnedPoints.length
-      ? '<h4>✅ 得分点</h4><ul>' + f.earnedPoints.map(p => `<li>${escapeHtml(p)}</li>`).join('') + '</ul>' : ''}
-    ${f.missedPoints && f.missedPoints.length
-      ? '<h4>❌ 扣分点</h4><ul>' + f.missedPoints.map(p => `<li>${escapeHtml(p)}</li>`).join('') + '</ul>' : ''}
-    ${f.userAnswerAnalysis ? '<h4>分析</h4>' + renderMarkdownLite(f.userAnswerAnalysis) : ''}
-    ${f.referenceAnswer ? '<h4>参考答案</h4>' + renderMarkdownLite(f.referenceAnswer) : ''}
-    ${f.suggestions && f.suggestions.length
-      ? '<h4>改进建议</h4><ul>' + f.suggestions.map(s => `<li>${escapeHtml(s)}</li>`).join('') + '</ul>' : ''}
-    ${f.relatedTopics && f.relatedTopics.length
-      ? '<h4>相关知识点</h4><ul>' + f.relatedTopics.map(t => `<li>${escapeHtml(t)}</li>`).join('') + '</ul>' : ''}
-  `;
+  let html = `<div class="score-line">得分: <strong>${f.score}</strong> / ${f.maxScore} (${pct}%) — ${escapeHtml(f.verdict || '')}</div>`;
+
+  // rubric 结构化采分点表格
+  if (f.rubric && f.rubric.length) {
+    html += '<h4>📋 采分点</h4><table class="rubric-table"><thead><tr><th>命中</th><th>分值</th><th>采分点</th><th>理由</th></tr></thead><tbody>';
+    for (const r of f.rubric) {
+      const ok = r.hit ? '✓' : '✗';
+      const cls = r.hit ? 'hit' : 'miss';
+      html += `<tr class="${cls}"><td>${ok}</td><td>${escapeHtml(String(r.points || 0))}</td><td>${escapeHtml(r.id || '')}. ${escapeHtml(r.criterion || '')}</td><td>${escapeHtml(r.reason || '')}</td></tr>`;
+    }
+    if (f._rubric_total != null) {
+      html += `<tr class="rubric-summary"><td colspan="2">命中 ${f._rubric_hit_total || 0} / ${f._rubric_total || 0}</td><td colspan="2">scoring_mode: ${escapeHtml(f._scoring_mode || '')}</td></tr>`;
+    }
+    html += '</tbody></table>';
+  }
+
+  if (f.earnedPoints && f.earnedPoints.length) {
+    html += '<h4>✅ 得分点</h4><ul>' + f.earnedPoints.map(p => `<li>${escapeHtml(p)}</li>`).join('') + '</ul>';
+  }
+  if (f.missedPoints && f.missedPoints.length) {
+    html += '<h4>❌ 扣分点</h4><ul>' + f.missedPoints.map(p => `<li>${escapeHtml(p)}</li>`).join('') + '</ul>';
+  }
+  if (f.userAnswerAnalysis) html += '<h4>分析</h4>' + renderMarkdownLite(f.userAnswerAnalysis);
+  if (f.referenceAnswer) html += '<h4>参考答案(满分)</h4>' + renderMarkdownLite(f.referenceAnswer);
+  if (f.suggestions && f.suggestions.length) {
+    html += '<h4>改进建议</h4><ul>' + f.suggestions.map(s => `<li>${escapeHtml(s)}</li>`).join('') + '</ul>';
+  }
+  if (f.relatedTopics && f.relatedTopics.length) {
+    html += '<h4>相关知识点</h4><ul>' + f.relatedTopics.map(t => `<li>${escapeHtml(t)}</li>`).join('') + '</ul>';
+  }
+  if (f.reasoning_content) {
+    html += renderReasoningPanel(f.reasoning_content, f.reasoning_tokens);
+  }
+  return html;
 }
 
 // ---- 主观题批改 ----
@@ -445,16 +584,18 @@ document.getElementById('form-grade').addEventListener('submit', async (ev) => {
   out.hidden = false;
   body.innerHTML = '<p class="muted">批改中…</p>';
   try {
+    const userAnswerParts = await collectAnswerParts('grade-image', f.userAnswer.value);
     const r = await api('POST', '/api/grade-answer', {
       question: {
         subject: f.subject.value,
         type: f.questionType.value,
         stem: f.stem.value,
       },
-      userAnswer: f.userAnswer.value,
+      userAnswer: userAnswerParts,
       maxScore: parseInt(f.maxScore.value, 10) || 20,
       rubric: f.rubric.value,
       addToMistakes: f.addToMistakes.checked,
+      extremeThinking: f.extremeThinking && f.extremeThinking.checked,
     });
     body.innerHTML = renderFeedback(r.feedback);
     toast(f.addToMistakes.checked ? '已批改并加入错题本' : '已批改', 'ok');
@@ -503,12 +644,19 @@ function renderHistory(items, type) {
     } else if (type === 'answers') {
       const f = it.feedback || {};
       body = `<div>得分 <strong>${it.score}</strong> / ${it.maxScore}</div>
-              <div class="muted">${escapeHtml((f.verdict || '').slice(0, 80))}</div>`;
+              <div class="muted">${escapeHtml((f.verdict || '').slice(0, 80))}</div>
+              <button class="btn-detail" data-attempt-id="${escapeHtml(it.id)}">📖 展开完整答卷</button>
+              <div class="detail-body" id="detail-${escapeHtml(it.id)}" hidden></div>`;
     } else if (type === 'mistakes') {
       body = `<div>${escapeHtml(it.reason || '')}</div>
               <div class="muted">关联题目: ${escapeHtml(it.questionId || '无')}</div>`;
     } else if (type === 'sessions') {
-      body = `<div class="muted">${it.messages ? it.messages.length : 0} 条消息 · 科目 ${escapeHtml(it.subject || '')}</div>`;
+      const msgCount = it.messages ? it.messages.length : 0;
+      const firstQ = it.messages && it.messages[0] ? it.messages[0].content.slice(0, 80) : '(空会话)';
+      body = `<div class="muted">${msgCount} 条消息 · 科目 ${escapeHtml(it.subject || '')}</div>
+              <div><strong>首问:</strong> ${escapeHtml(firstQ)}${firstQ.length >= 80 ? '…' : ''}</div>
+              <button class="btn-detail" data-session-id="${escapeHtml(it.id)}">💬 查看完整对话</button>
+              <div class="detail-body" id="session-${escapeHtml(it.id)}" hidden></div>`;
     }
     return `<article class="hcard" data-id="${escapeHtml(it.id)}">
       <header><span class="muted">${escapeHtml(time)}</span></header>
@@ -541,11 +689,635 @@ function bindHistoryActions() {
       } catch (e) { toast(e.message, 'error'); }
     };
   });
+  // 详情展开(支持 attempt / session 两种)
+  document.querySelectorAll('.btn-detail').forEach(b => {
+    b.onclick = async () => {
+      // attempt 类型
+      if (b.dataset.attemptId) {
+        const aid = b.dataset.attemptId;
+        const body = document.getElementById(`detail-${aid}`);
+        if (!body.hidden) {
+          body.hidden = true;
+          b.textContent = '📖 展开完整答卷';
+          return;
+        }
+        b.disabled = true;
+        b.textContent = '⏳ 加载中…';
+        try {
+          const r = await api('GET', `/api/attempt/${encodeURIComponent(aid)}`);
+          body.innerHTML = renderAttemptDetail(r.attempt);
+          body.hidden = false;
+          b.textContent = '🔼 收起';
+        } catch (e) { toast(e.message, 'error'); }
+        b.disabled = false;
+      }
+      // session 类型
+      else if (b.dataset.sessionId) {
+        const sid = b.dataset.sessionId;
+        const body = document.getElementById(`session-${sid}`);
+        if (!body.hidden) {
+          body.hidden = true;
+          b.textContent = '💬 查看完整对话';
+          return;
+        }
+        b.disabled = true;
+        b.textContent = '⏳ 加载中…';
+        try {
+          const r = await api('GET', `/api/session/${encodeURIComponent(sid)}`);
+          body.innerHTML = renderSessionDetail(r.session);
+          body.hidden = false;
+          b.textContent = '🔼 收起';
+        } catch (e) { toast(e.message, 'error'); }
+        b.disabled = false;
+      }
+    };
+  });
 }
+
+function renderSessionDetail(s) {
+  const msgs = s.messages || [];
+  return `
+    <div class="attempt-detail panel">
+      <h4>💬 完整对话 <span class="muted">(${msgs.length} 条消息)</span></h4>
+      <div class="chat-thread">
+        ${msgs.map(m => {
+          const cls = m.role === 'user' ? 'chat-user' : 'chat-assistant';
+          const sources = (m.sources && m.sources.length) ?
+            `<div class="muted">📎 来源: ${m.sources.map(s => `<a href="${escapeHtml(s)}" target="_blank">${escapeHtml(s)}</a>`).join(', ')}</div>` : '';
+          return `<div class="chat-msg ${cls}">
+            <div class="chat-role">${m.role === 'user' ? '👤 你' : '🤖 AI'}</div>
+            <div class="chat-content">${renderMarkdownLite(m.content)}</div>
+            ${sources}
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderAttemptDetail(a) {
+  const q = a.question || {};
+  const rubric = a.rubricHits || [];
+  let rubricHtml = '';
+  if (rubric.length > 0) {
+    rubricHtml = `<h4>📐 采分点</h4><table class="stats-table">
+      <thead><tr><th>采分点</th><th>命中</th><th>说明</th></tr></thead>
+      <tbody>${rubric.map(r => `<tr>
+        <td>${escapeHtml(r.id || '')}</td>
+        <td>${r.hit ? '✓' : '✗'}</td>
+        <td>${escapeHtml(r.reason || r.criterion || '')}</td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+  }
+  return `
+    <div class="attempt-detail panel">
+      <h4>📌 题目</h4>
+      <div class="muted">${escapeHtml(q.subject || '')} · ${escapeHtml(q.topic || '')} · ${escapeHtml(q.type || '')}${q.difficulty ? ' · ' + escapeHtml(q.difficulty) : ''}</div>
+      <div class="stem">${renderMarkdownLite(q.stem || '')}</div>
+      ${q.options && q.options.length ? '<ol class="opts">' + q.options.map((o, i) => `<li>${escapeHtml(o)}</li>`).join('') + '</ol>' : ''}
+      ${q.answer ? `<p><strong>标准答案:</strong> ${escapeHtml(q.answer)}</p>` : ''}
+      ${q.explanation ? '<details><summary>题目解析</summary><div>' + renderMarkdownLite(q.explanation) + '</div></details>' : ''}
+      <h4>✍️ 你的作答</h4>
+      <div class="user-answer">${escapeHtml(a.userAnswer || '(未作答)')}</div>
+      ${a.durationMs ? `<div class="muted">用时 ${Math.round(a.durationMs / 1000)} 秒</div>` : ''}
+      ${a.referenceAnswer ? '<details><summary>📖 参考答案</summary><div>' + renderMarkdownLite(a.referenceAnswer) + '</div></details>' : ''}
+      ${a.aiVerdict ? '<h4>🤖 AI 批改</h4><div>' + renderMarkdownLite(a.aiVerdict) + '</div>' : ''}
+      ${rubricHtml}
+    </div>
+  `;
+}
+
+// ---- 模拟考试模块 ----
+const exam = {
+  current: null,        // 当前答卷对象 {exam, answers, currentIdx, startTime, durations}
+  answers: [],          // 每题 [{questionId, userAnswer, durationMs}]
+  durations: [],        // 每题累计停留毫秒
+  currentIdx: 0,
+  startTime: 0,
+  durationMinutes: 90,
+  timerHandle: null,
+  timeUp: false,
+};
+
+// 子页面 tab 切换
+document.querySelectorAll('[data-practice-tab]').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('[data-practice-tab]').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    const tab = t.dataset.practiceTab;
+    document.getElementById('practice-free').hidden = tab !== 'free';
+    document.getElementById('practice-exam').hidden = tab !== 'exam';
+  });
+});
+
+// Step 1: 生成模拟卷 → 进入确认页(尚未计时)
+document.getElementById('btn-exam-generate').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-exam-generate');
+  const msg = document.getElementById('exam-setup-msg');
+  const subject = document.getElementById('exam-subject').value;
+  const duration = parseInt(document.getElementById('exam-duration').value, 10) || 90;
+  const single = parseInt(document.getElementById('exam-single').value, 10) || 0;
+  const multi = parseInt(document.getElementById('exam-multi').value, 10) || 0;
+  const essay = parseInt(document.getElementById('exam-essay').value, 10) || 0;
+  const extreme = document.getElementById('exam-extreme').checked;
+  if (single + multi + essay === 0) { toast('至少要生成一种题型的题目', 'warn'); return; }
+
+  btn.disabled = true;
+  msg.textContent = `⏳ 正在生成 ${single + multi + essay} 道题... (按经验需要 30-90 秒)`;
+  try {
+    const r = await api('POST', '/api/exam/generate', {
+      subject, durationMinutes: duration,
+      singleCount: single, multiCount: multi, essayCount: essay,
+      extremeThinking: extreme,
+    });
+    exam.durationMinutes = duration;
+    exam.timeUp = false;
+    showConfirmPage(r.exam);
+  } catch (e) {
+    msg.innerHTML = `<div class="error">⚠️ ${escapeHtml(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// 显示确认页(还没计时)
+function showConfirmPage(examObj) {
+  exam.current = examObj;
+  exam.answers = exam.current.questions.map(q => ({ questionId: q.id, userAnswer: '', durationMs: 0 }));
+  exam.durations = new Array(exam.current.questions.length).fill(0);
+  exam.currentIdx = 0;
+  exam.lastFlip = null;
+  // 题型分布
+  const breakdown = {};
+  exam.current.questions.forEach(q => {
+    const t = q.type || '其他';
+    breakdown[t] = (breakdown[t] || 0) + 1;
+  });
+  const meta = document.getElementById('exam-confirm-meta');
+  meta.innerHTML = `
+    <div>科目 <strong>${escapeHtml(exam.current.subject)}</strong></div>
+    <div>题量 <strong>${exam.current.totalQuestions}</strong></div>
+    <div>时长 <strong>${exam.durationMinutes}</strong> 分钟</div>
+    <div>题型 <strong>${Object.entries(breakdown).map(([k,v])=>`${k}×${v}`).join(' ')}</strong></div>
+  `;
+  // TOC
+  const toc = document.getElementById('exam-confirm-toc');
+  toc.innerHTML = exam.current.questions.map((q, i) =>
+    `<li>${escapeHtml(q.type || '')} — ${escapeHtml((q.stem || '').slice(0, 60))}${q.stem && q.stem.length > 60 ? '…' : ''}</li>`
+  ).join('');
+  // 切视图
+  document.getElementById('exam-setup').hidden = true;
+  document.getElementById('exam-confirm').hidden = false;
+  document.getElementById('exam-paper').hidden = true;
+  document.getElementById('exam-result').hidden = true;
+  document.getElementById('exam-history').hidden = true;
+}
+
+// 确认页 → 开始作答(启动计时)
+document.getElementById('btn-exam-start').addEventListener('click', () => {
+  document.getElementById('exam-confirm').hidden = true;
+  document.getElementById('exam-paper').hidden = false;
+  document.getElementById('exam-paper-title').textContent = `${exam.current.subject} 模拟卷`;
+  document.getElementById('exam-paper-meta').textContent =
+    ` · 共 ${exam.current.totalQuestions} 题 · 时长 ${exam.durationMinutes} 分钟`;
+  exam.startTime = Date.now();
+  exam.lastFlip = exam.startTime;
+  startExamTimer();
+  renderExamQuestion();
+});
+
+document.getElementById('btn-exam-back-from-confirm').addEventListener('click', () => {
+  exam.current = null;
+  document.getElementById('exam-confirm').hidden = true;
+  document.getElementById('exam-setup').hidden = false;
+});
+
+// 历史试卷列表
+document.getElementById('btn-exam-show-history').addEventListener('click', async () => {
+  const panel = document.getElementById('exam-history');
+  const list = document.getElementById('exam-history-list');
+  if (!panel.hidden) { panel.hidden = true; return; }
+  try {
+    const r = await api('GET', '/api/exams');
+    if (!r.items || r.items.length === 0) {
+      list.innerHTML = '<p class="muted">暂无历史试卷</p>';
+    } else {
+      list.innerHTML = r.items.map(it => {
+        const breakdown = Object.entries(it.typeBreakdown || {}).map(([k,v])=>`${k}×${v}`).join(' ') || '-';
+        return `<div class="exam-history-item">
+          <div>
+            <strong>${escapeHtml(it.subject)}</strong>
+            <span class="muted">${escapeHtml(it.createdAt)}</span>
+            <div class="muted">${it.totalQuestions} 题 · ${it.durationMinutes} 分钟 · ${breakdown}</div>
+          </div>
+          <div>
+            <button type="button" data-load-exam="${it.id}">加载并答卷</button>
+            <button type="button" class="muted" data-delete-exam="${it.id}">删除</button>
+          </div>
+        </div>`;
+      }).join('');
+      // 绑定每行的加载/删除
+      list.querySelectorAll('[data-load-exam]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const id = btn.dataset.loadExam;
+          try {
+            const r = await api('GET', `/api/exam/${id}`);
+            exam.durationMinutes = r.exam.durationMinutes || 90;
+            exam.timeUp = false;
+            showConfirmPage(r.exam);
+          } catch (e) { toast(e.message, 'error'); }
+        });
+      });
+      list.querySelectorAll('[data-delete-exam]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('确定删除这张历史试卷?(不可恢复)')) return;
+          try {
+            await api('DELETE', `/api/exam/${btn.dataset.deleteExam}`);
+            btn.closest('.exam-history-item').remove();
+            toast('已删除', 'info');
+          } catch (e) { toast(e.message, 'error'); }
+        });
+      });
+    }
+    panel.hidden = false;
+  } catch (e) {
+    toast('加载历史失败: ' + e.message, 'error');
+  }
+});
+
+function startExamTimer() {
+  if (exam.timerHandle) clearInterval(exam.timerHandle);
+  const totalMs = exam.durationMinutes * 60 * 1000;
+  document.getElementById('exam-timer-total').textContent = `/ ${exam.durationMinutes}:00`;
+  exam.timerHandle = setInterval(() => {
+    const elapsed = Date.now() - exam.startTime;
+    const remain = Math.max(0, totalMs - elapsed);
+    const m = Math.floor(remain / 60000);
+    const s = Math.floor((remain % 60000) / 1000);
+    document.getElementById('exam-timer').textContent =
+      `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    if (remain === 0 && !exam.timeUp) {
+      exam.timeUp = true;
+      clearInterval(exam.timerHandle);
+      toast('⏰ 考试时间已到!你可以继续检查,但建议尽快交卷。', 'warn');
+      if (confirm('⏰ 考试时间已到。是否立即交卷?')) {
+        submitExam();
+      }
+    }
+  }, 1000);
+}
+
+function renderExamQuestion() {
+  if (!exam.current) return;
+  const idx = exam.currentIdx;
+  const q = exam.current.questions[idx];
+  document.getElementById('exam-q-no').textContent = idx + 1;
+  document.getElementById('exam-q-total').textContent = exam.current.questions.length;
+  document.getElementById('exam-q-type').textContent = q.type || '';
+  document.getElementById('exam-q-stem').innerHTML = renderMarkdownLite(q.stem || '');
+  document.getElementById('exam-q-answer').value = exam.answers[idx].userAnswer || '';
+  document.getElementById('exam-q-dur').textContent = Math.round(exam.durations[idx] / 1000);
+
+  // 选项:单选 radio, 多选 checkbox
+  const optEl = document.getElementById('exam-q-options');
+  if (q.options && q.options.length) {
+    const isMulti = (q.type || '').includes('多');
+    const currentVal = exam.answers[idx].userAnswer || '';
+    const currentSet = isMulti ? currentVal.split(',') : [];
+    optEl.innerHTML = '<ol class="opts">' + q.options.map((o, i) => {
+      const letter = String.fromCharCode(65 + i);
+      if (isMulti) {
+        const checked = currentSet.includes(letter) ? 'checked' : '';
+        return `<li><label><input type="checkbox" name="exam-opt" value="${letter}" ${checked}/> ${escapeHtml(o)}</label></li>`;
+      } else {
+        const checked = currentVal === letter ? 'checked' : '';
+        return `<li><label><input type="radio" name="exam-opt" value="${letter}" ${checked}/> ${escapeHtml(o)}</label></li>`;
+      }
+    }).join('') + '</ol>';
+    optEl.hidden = false;
+    optEl.querySelectorAll('input[name="exam-opt"]').forEach(inp => {
+      inp.addEventListener('change', () => collectExamAnswer());
+    });
+  } else {
+    optEl.hidden = true;
+  }
+
+  // 更新进度
+  const answered = exam.answers.filter(a => a.userAnswer && a.userAnswer.trim()).length;
+  document.getElementById('exam-q-progress').textContent = `已答 ${answered} / ${exam.current.questions.length}`;
+
+  // 翻页按钮可用性
+  document.getElementById('btn-exam-prev').disabled = idx === 0;
+  document.getElementById('btn-exam-next').disabled = idx === exam.current.questions.length - 1;
+}
+
+function collectExamAnswer() {
+  if (!exam.current) return;
+  const idx = exam.currentIdx;
+  const q = exam.current.questions[idx];
+  let ans = '';
+  if (q.options && q.options.length) {
+    const isMulti = (q.type || '').includes('多');
+    if (isMulti) {
+      const checked = Array.from(document.querySelectorAll('input[name="exam-opt"]:checked')).map(x => x.value);
+      ans = checked.sort().join(',');
+    } else {
+      const checked = document.querySelector('input[name="exam-opt"]:checked');
+      ans = checked ? checked.value : '';
+    }
+  }
+  // 叠加 textarea 输入(简答题)
+  const text = document.getElementById('exam-q-answer').value.trim();
+  if (text) ans = ans ? ans + "\n" + text : text;
+  exam.answers[idx].userAnswer = ans;
+}
+
+document.getElementById('exam-q-answer').addEventListener('input', collectExamAnswer);
+
+// 翻页:先把当前题停留时长累加,再切换
+function examFlipTo(newIdx) {
+  if (!exam.current) return;
+  // 累加当前题
+  exam.durations[exam.currentIdx] = exam.durations[exam.currentIdx] || 0;
+  // 当前题停留时长:用 performance.now() 不准确(刷新会丢),改用翻页瞬间记录
+  exam.lastFlip = exam.lastFlip || Date.now();
+  const now = Date.now();
+  exam.durations[exam.currentIdx] += (now - exam.lastFlip);
+  exam.lastFlip = now;
+  // 切题
+  exam.currentIdx = newIdx;
+  renderExamQuestion();
+}
+
+document.getElementById('btn-exam-prev').addEventListener('click', () => {
+  if (exam.currentIdx > 0) examFlipTo(exam.currentIdx - 1);
+});
+document.getElementById('btn-exam-next').addEventListener('click', () => {
+  if (exam.currentIdx < exam.current.questions.length - 1) examFlipTo(exam.currentIdx + 1);
+});
+
+// 交卷
+document.getElementById('btn-exam-submit').addEventListener('click', () => {
+  if (!exam.current) return;
+  // 把最后一题的停留时长累加
+  exam.durations[exam.currentIdx] += (Date.now() - exam.lastFlip);
+  // 把 durations 写到 answers
+  exam.answers.forEach((a, i) => a.durationMs = exam.durations[i] || 0);
+  if (!confirm('确认交卷?交卷后无法修改答案。')) return;
+  submitExam();
+});
+
+async function submitExam() {
+  const btn = document.getElementById('btn-exam-submit');
+  btn.disabled = true;
+  if (exam.timerHandle) clearInterval(exam.timerHandle);
+  try {
+    const r = await api('POST', `/api/exam/${exam.current.id}/grade`, {
+      answers: exam.answers,
+      timeUp: exam.timeUp,
+    });
+    showExamResult(r);
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function showExamResult(r) {
+  document.getElementById('exam-paper').hidden = true;
+  document.getElementById('exam-result').hidden = false;
+  const s = r.summary;
+  document.getElementById('exam-total-score').textContent = s.totalScore;
+  document.getElementById('exam-total-max').textContent = s.totalMax;
+  document.getElementById('exam-total-pct').textContent = s.percent;
+  document.getElementById('exam-total-dur').textContent = s.totalDurationSec;
+  document.getElementById('exam-time-up-banner').hidden = !s.timeUp;
+
+  const list = document.getElementById('exam-results-list');
+  list.innerHTML = r.attempt.results.map((it, i) => {
+    const cls = it.isCorrect ? 'correct' : 'wrong';
+    const durMin = Math.floor((it.durationSec || 0) / 60);
+    const durSec = Math.round((it.durationSec || 0) % 60);
+    let feedback = '';
+    if (it.gradingMode === 'ai' && it.feedback) {
+      feedback = `<details><summary>AI 批改详情</summary>
+        <div class="muted">${escapeHtml(it.feedback.verdict || '')}</div>
+        ${it.feedback.referenceAnswer ? '<p><strong>参考答案:</strong> ' + renderMarkdownLite(it.feedback.referenceAnswer) + '</p>' : ''}
+      </details>`;
+    }
+    return `<article class="exam-result-item ${cls}">
+      <header>
+        <strong>#${i+1} ${escapeHtml(it.type)}</strong>
+        <span class="badge">${it.score} / ${it.maxScore} 分</span>
+        <span class="muted">用时 ${durMin}:${String(durSec).padStart(2,'0')}</span>
+        ${it.isCorrect ? '<span class="badge">✓ 正确</span>' : '<span class="badge" style="background:#dc3545;color:#fff;">✗ 错误</span>'}
+      </header>
+      <div class="stem">${renderMarkdownLite(it.stem)}</div>
+      <div class="muted"><strong>你的答案:</strong> ${escapeHtml(it.userAnswer || '(未作答)')}</div>
+      <div class="muted"><strong>正确答案:</strong> ${escapeHtml(it.correctAnswer || '(无)')}</div>
+      ${it.explanation ? '<details><summary>题目解析</summary><div>' + renderMarkdownLite(it.explanation) + '</div></details>' : ''}
+      ${feedback}
+    </article>`;
+  }).join('');
+}
+
+document.getElementById('btn-exam-back-setup').addEventListener('click', () => {
+  exam.current = null;
+  document.getElementById('exam-result').hidden = true;
+  document.getElementById('exam-paper').hidden = true;
+  document.getElementById('exam-setup').hidden = false;
+});
+
+// 复盘入口
+document.getElementById('btn-exam-review').addEventListener('click', () => {
+  document.getElementById('exam-result').hidden = true;
+  document.getElementById('exam-review').hidden = false;
+  loadReview();
+});
+
+document.querySelectorAll('[data-review-tab]').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('[data-review-tab]').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    const tab = t.dataset.reviewTab;
+    document.getElementById('review-attempts').hidden = tab !== 'attempts';
+    document.getElementById('review-stats').hidden = tab !== 'stats';
+  });
+});
+
+async function loadReview() {
+  await Promise.all([loadAttempts(), loadStats()]);
+}
+
+async function loadAttempts() {
+  const list = document.getElementById('review-attempts-list');
+  try {
+    const r = await api('GET', '/api/exam-attempts');
+    if (!r.items || r.items.length === 0) {
+      list.innerHTML = '<p class="muted">还没有考试记录。完成一次模拟考试后会出现在这里。</p>';
+      return;
+    }
+    list.innerHTML = r.items.map(it => {
+      const dur = Math.round(it.totalDurationSec || 0);
+      return `<div class="exam-history-item">
+        <div>
+          <strong>${escapeHtml(it.subject || '-')}</strong>
+          <span class="muted">${escapeHtml(it.submittedAt || '')}</span>
+          <div class="muted">
+            ${it.totalScore}/${it.totalMax} 分 · 正确率 ${it.percent}% · ${it.questionCount} 题 · 用时 ${dur}s
+            ${it.timeUp ? '<span class="warn">⏰ 超时提交</span>' : ''}
+          </div>
+        </div>
+        <div>
+          <button type="button" data-view-attempt="${it.id}">查看答卷</button>
+          <button type="button" class="muted" data-del-attempt="${it.id}">删除</button>
+        </div>
+      </div>`;
+    }).join('');
+    list.querySelectorAll('[data-view-attempt]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        try {
+          const r = await api('GET', `/api/exam-attempt/${btn.dataset.viewAttempt}`);
+          showReviewAttempt(r.attempt);
+        } catch (e) { toast(e.message, 'error'); }
+      });
+    });
+    list.querySelectorAll('[data-del-attempt]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('删除这条考试记录?')) return;
+        try {
+          await api('DELETE', `/api/exam-attempt/${btn.dataset.delAttempt}`);
+          loadAttempts();
+          loadStats();
+          toast('已删除', 'info');
+        } catch (e) { toast(e.message, 'error'); }
+      });
+    });
+  } catch (e) {
+    list.innerHTML = `<div class="error">⚠️ ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function showReviewAttempt(a) {
+  // 复用 exam-result 的 DOM 结构
+  document.getElementById('exam-review').hidden = true;
+  document.getElementById('exam-result').hidden = false;
+  document.getElementById('exam-total-score').textContent = a.totalScore;
+  document.getElementById('exam-total-max').textContent = a.totalMax;
+  document.getElementById('exam-total-pct').textContent =
+    a.totalMax ? Math.round(a.totalScore / a.totalMax * 1000) / 10 : 0;
+  document.getElementById('exam-total-dur').textContent =
+    Math.round((a.totalDurationMs || 0) / 1000);
+  document.getElementById('exam-time-up-banner').hidden = !a.timeUp;
+  const list = document.getElementById('exam-results-list');
+  list.innerHTML = (a.results || []).map((it, i) => {
+    const cls = it.isCorrect ? 'correct' : 'wrong';
+    let fb = '';
+    if (it.gradingMode === 'ai' && it.feedback) {
+      fb = `<details><summary>AI 批改详情</summary>
+        <div class="muted">${escapeHtml(it.feedback.verdict || '')}</div>
+        ${it.feedback.referenceAnswer ? '<p><strong>参考答案:</strong> ' + renderMarkdownLite(it.feedback.referenceAnswer) + '</p>' : ''}
+      </details>`;
+    }
+    return `<article class="exam-result-item ${cls}">
+      <header>
+        <strong>#${i+1} ${escapeHtml(it.type)} · ${escapeHtml(it.topic || '')}</strong>
+        <span class="badge">${it.score} / ${it.maxScore} 分</span>
+        <span class="muted">用时 ${Math.round(it.durationSec || 0)}s</span>
+        ${it.isCorrect ? '<span class="badge">✓ 正确</span>' : '<span class="badge" style="background:#dc3545;color:#fff;">✗ 错误</span>'}
+      </header>
+      <div class="stem">${renderMarkdownLite(it.stem)}</div>
+      <div class="muted"><strong>你的答案:</strong> ${escapeHtml(it.userAnswer || '(未作答)')}</div>
+      <div class="muted"><strong>正确答案:</strong> ${escapeHtml(it.correctAnswer || '(无)')}</div>
+      ${it.explanation ? '<details><summary>题目解析</summary><div>' + renderMarkdownLite(it.explanation) + '</div></details>' : ''}
+      ${fb}
+    </article>`;
+  }).join('');
+}
+
+async function loadStats() {
+  try {
+    const r = await api('GET', '/api/exam-stats');
+    const summary = document.getElementById('review-stats-summary');
+    summary.innerHTML = `
+      <div class="exam-score-summary">
+        <div>考试次数 <strong>${r.totalAttempts}</strong></div>
+        <div>累计答题 <strong>${r.totalQuestions}</strong></div>
+        <div>总正确 <strong>${r.totalCorrect}</strong></div>
+        <div>总正确率 <strong>${r.overallRate}</strong>%</div>
+      </div>
+    `;
+    renderStatsTable('review-stats-type', r.byType);
+    renderStatsTable('review-stats-topic', r.byTopic);
+    renderStatsTable('review-stats-subject', r.bySubject);
+  } catch (e) {
+    document.getElementById('review-stats').innerHTML =
+      `<div class="error">⚠️ ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderStatsTable(elId, rows) {
+  const el = document.getElementById(elId);
+  if (!rows || rows.length === 0) {
+    el.innerHTML = '<tr><td class="muted">暂无数据</td></tr>';
+    return;
+  }
+  el.innerHTML = `
+    <thead><tr><th>项目</th><th>题数</th><th>正确</th><th>正确率</th><th>得分率</th></tr></thead>
+    <tbody>${rows.map(r => {
+      const color = r.rate >= 75 ? '#34c759' : r.rate >= 50 ? '#ff9500' : '#dc3545';
+      return `<tr>
+        <td>${escapeHtml(r.key)}</td>
+        <td>${r.total}</td>
+        <td>${r.correct}</td>
+        <td><strong style="color:${color}">${r.rate}%</strong></td>
+        <td>${r.scoreRate}%</td>
+      </tr>`;
+    }).join('')}</tbody>
+  `;
+}
+
+// 从复盘回配置页(若想完全退出复盘)
+function exitReview() {
+  document.getElementById('exam-review').hidden = true;
+  document.getElementById('exam-setup').hidden = false;
+}
+
+// 启动时初始化
+document.addEventListener('DOMContentLoaded', () => {
+  // exam.lastFlip 用于累计停留时长
+});
+
 
 // ---- 启动 ----
 (function init() {
   const m = (location.hash || '#home').match(/#([^?]+)/);
   showView(m ? m[1] : 'home');
   refreshStatus();
+  bindImagePreview('explain-image', 'explain-image-preview');
+  bindImagePreview('grade-image', 'grade-image-preview');
+  bindImagePreview('practice-image', 'practice-image-preview');
+  // 粘贴截图支持
+  bindPasteOnTextarea('explain-question', 'explain-image', 'explain-image-preview');
+  bindPasteOnTextarea('grade-userAnswer', 'grade-image', 'grade-image-preview');
+  bindPasteOnTextarea('practice-answer', 'practice-image', 'practice-image-preview');
+  bindModelSelect();
 })();
+
+// ---- 模型选择器:下拉切换 + 写回 config.json ----
+function bindModelSelect() {
+  const sel = document.getElementById('model-select');
+  if (!sel) return;
+  sel.addEventListener('change', async () => {
+    try {
+      await api('POST', '/api/config', { model: sel.value });
+      toast('模型已切换为 ' + sel.value, 'ok');
+      document.getElementById('model-input').value = sel.value;
+    } catch (e) { toast(e.message, 'error'); sel.value = document.getElementById('model-input').value || sel.value; }
+  });
+  // 从 config 同步当前值
+  api('GET', '/api/config').then(cfg => {
+    sel.value = cfg.model || sel.value;
+  }).catch(() => {});
+}

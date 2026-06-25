@@ -1,0 +1,148 @@
+[
+  {
+    "id": "att_5f0fd793",
+    "examId": "exam_ea149df3",
+    "submittedAt": "2026-06-27T07:49:01Z",
+    "timeUp": false,
+    "answers": [
+      {
+        "questionId": "q_059d8d76",
+        "userAnswer": "D",
+        "durationMs": 15000
+      },
+      {
+        "questionId": "q_82335001",
+        "userAnswer": "A",
+        "durationMs": 22000
+      },
+      {
+        "questionId": "q_a214e2b1",
+        "userAnswer": "BC",
+        "durationMs": 35000
+      }
+    ],
+    "results": [
+      {
+        "questionId": "q_059d8d76",
+        "examQuestionNo": 1,
+        "type": "单选题",
+        "stem": "甲因急需用钱，将市价100万元的房屋以80万元卖给乙，乙对此明知。后甲反悔，主张买卖合同显失公平，请求撤销。下列哪一说法是正确的？",
+        "userAnswer": "D",
+        "correctAnswer": "D",
+        "isCorrect": true,
+        "score": 2,
+        "maxScore": 2,
+        "durationMs": 15000,
+        "durationSec": 15.0,
+        "explanation": "《民法典》第151条规定，一方利用对方处于危困状态、缺乏判断能力等情形，致使民事法律行为成立时显失公平的，受损害方有权请求撤销。本题中，甲虽以低于市价出售，但乙并未利用甲的危困状态，甲是自愿交易，不符合显失公平的构成要件。因此，合同有效，甲不能撤销。常见错误：误以为价格明显不合理即构成显失公平，但忽略了“利用对方困境”的主观要件。A选项忽略了乙的主观因素；B选项表述不完全；C选项错误，即使显失公平也只能请求撤销，不能请求变更（新民法已删除变更）。",
+        "gradingMode": "auto"
+      },
+      {
+        "questionId": "q_82335001",
+        "examQuestionNo": 2,
+        "type": "单选题",
+        "stem": "2018年3月1日，甲向乙借款10万元，约定2019年3月1日还款。到期后甲未还款。乙于2020年8月1日向法院提起诉讼，要求甲还款。甲以诉讼时效届满为由抗辩。关于本案，下列哪一说法是正确的？",
+        "userAnswer": "A",
+        "correctAnswer": "C",
+        "isCorrect": false,
+        "score": 0,
+        "maxScore": 2,
+        "durationMs": 22000,
+        "durationSec": 22.0,
+        "explanation": "本题中，借款履行期限为2019年3月1日，诉讼时效自2019年3月2日起算3年，至2022年3月1日届满。乙于2020年8月1日起诉，仍在诉讼时效期间内，且起诉行为引发诉讼时效中断，从中断之日起重新计算。故C正确。A错误，因为未超时效；B错误，时效中断后从新计算，不是从起诉日重新计算，而是从中断之日起重新计算3年；D错误，虽然甲同意履行可重新计算时效，但前提是诉讼时效已经届满，本题未届满。",
+        "gradingMode": "auto"
+      },
+      {
+        "questionId": "q_a214e2b1",
+        "examQuestionNo": 3,
+        "type": "多选题",
+        "stem": "出租人甲将房屋出租给承租人乙，租期3年。乙未经甲同意，将房屋转租给次承租人丙，租期2年。甲得知转租事实后，未作任何表示。6个月后，甲以乙擅自转租为由，请求解除与乙的租赁合同。关于本案，下列说法正确的是？",
+        "userAnswer": "BC",
+        "correctAnswer": "BC",
+        "isCorrect": true,
+        "score": 3,
+        "maxScore": 3,
+        "durationMs": 35000,
+        "durationSec": 35.0,
+        "explanation": "根据《民法典》第718条，出租人知道或者应当知道承租人转租，但是在六个月内未提出异议的，视为出租人同意转租。本案中，甲知道转租后六个月内未提出异议，应视为同意转租，因此甲无权解除租赁合同（B正确），乙与丙的转租合同有效（C正确）。常见错误：选项A误以为只要未经同意转租，出租人随时可以解除合同，忽略了六个月异议期；选项D误以为未经同意的转租合同效力待定，但这里因视为同意而有效。",
+        "gradingMode": "auto"
+      }
+    ],
+    "totalScore": 5.0,
+    "totalMax": 7.0,
+    "totalDurationMs": 72000
+  },
+  {
+    "id": "att_80c067d6",
+    "examId": "exam_ea149df3",
+    "submittedAt": "2026-06-27T07:49:10Z",
+    "timeUp": true,
+    "answers": [
+      {
+        "questionId": "q_059d8d76",
+        "userAnswer": "",
+        "durationMs": 60000
+      },
+      {
+        "questionId": "q_82335001",
+        "userAnswer": "",
+        "durationMs": 60000
+      },
+      {
+        "questionId": "q_a214e2b1",
+        "userAnswer": "",
+        "durationMs": 60000
+      }
+    ],
+    "results": [
+      {
+        "questionId": "q_059d8d76",
+        "examQuestionNo": 1,
+        "type": "单选题",
+        "stem": "甲因急需用钱，将市价100万元的房屋以80万元卖给乙，乙对此明知。后甲反悔，主张买卖合同显失公平，请求撤销。下列哪一说法是正确的？",
+        "userAnswer": "",
+        "correctAnswer": "D",
+        "isCorrect": false,
+        "score": 0,
+        "maxScore": 2,
+        "durationMs": 60000,
+        "durationSec": 60.0,
+        "explanation": "《民法典》第151条规定，一方利用对方处于危困状态、缺乏判断能力等情形，致使民事法律行为成立时显失公平的，受损害方有权请求撤销。本题中，甲虽以低于市价出售，但乙并未利用甲的危困状态，甲是自愿交易，不符合显失公平的构成要件。因此，合同有效，甲不能撤销。常见错误：误以为价格明显不合理即构成显失公平，但忽略了“利用对方困境”的主观要件。A选项忽略了乙的主观因素；B选项表述不完全；C选项错误，即使显失公平也只能请求撤销，不能请求变更（新民法已删除变更）。",
+        "gradingMode": "auto"
+      },
+      {
+        "questionId": "q_82335001",
+        "examQuestionNo": 2,
+        "type": "单选题",
+        "stem": "2018年3月1日，甲向乙借款10万元，约定2019年3月1日还款。到期后甲未还款。乙于2020年8月1日向法院提起诉讼，要求甲还款。甲以诉讼时效届满为由抗辩。关于本案，下列哪一说法是正确的？",
+        "userAnswer": "",
+        "correctAnswer": "C",
+        "isCorrect": false,
+        "score": 0,
+        "maxScore": 2,
+        "durationMs": 60000,
+        "durationSec": 60.0,
+        "explanation": "本题中，借款履行期限为2019年3月1日，诉讼时效自2019年3月2日起算3年，至2022年3月1日届满。乙于2020年8月1日起诉，仍在诉讼时效期间内，且起诉行为引发诉讼时效中断，从中断之日起重新计算。故C正确。A错误，因为未超时效；B错误，时效中断后从新计算，不是从起诉日重新计算，而是从中断之日起重新计算3年；D错误，虽然甲同意履行可重新计算时效，但前提是诉讼时效已经届满，本题未届满。",
+        "gradingMode": "auto"
+      },
+      {
+        "questionId": "q_a214e2b1",
+        "examQuestionNo": 3,
+        "type": "多选题",
+        "stem": "出租人甲将房屋出租给承租人乙，租期3年。乙未经甲同意，将房屋转租给次承租人丙，租期2年。甲得知转租事实后，未作任何表示。6个月后，甲以乙擅自转租为由，请求解除与乙的租赁合同。关于本案，下列说法正确的是？",
+        "userAnswer": "",
+        "correctAnswer": "BC",
+        "isCorrect": false,
+        "score": 0,
+        "maxScore": 3,
+        "durationMs": 60000,
+        "durationSec": 60.0,
+        "explanation": "根据《民法典》第718条，出租人知道或者应当知道承租人转租，但是在六个月内未提出异议的，视为出租人同意转租。本案中，甲知道转租后六个月内未提出异议，应视为同意转租，因此甲无权解除租赁合同（B正确），乙与丙的转租合同有效（C正确）。常见错误：选项A误以为只要未经同意转租，出租人随时可以解除合同，忽略了六个月异议期；选项D误以为未经同意的转租合同效力待定，但这里因视为同意而有效。",
+        "gradingMode": "auto"
+      }
+    ],
+    "totalScore": 0.0,
+    "totalMax": 7.0,
+    "totalDurationMs": 180000
+  }
+]
