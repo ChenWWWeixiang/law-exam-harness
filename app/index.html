@@ -16,6 +16,8 @@
       <a href="#practice" data-route="practice">练习</a>
       <a href="#grade" data-route="grade">主观题批改</a>
       <a href="#history" data-route="history">历史记录</a>
+      <a href="#search" data-route="search">题库检索</a>
+      <a href="#laws" data-route="laws">法条查询</a>
       <a href="#settings" data-route="settings">设置</a>
     </nav>
     <div class="topbar-right">
@@ -180,6 +182,7 @@
             <h3 style="margin:0;">📝 配置模拟卷</h3>
             <button id="btn-exam-show-history" type="button" class="muted">📚 加载历史试卷</button>
           </div>
+          <label>试卷名称(可选,留空用默认) <input id="exam-title" maxlength="50" placeholder="如:2024 民法冲刺-2" /></label>
           <div class="grid-2">
             <label>科目
               <select id="exam-subject">
@@ -354,6 +357,30 @@
       <div id="mistake-stats-panel" class="panel" hidden></div>
       <div id="history-list" class="panel"></div>
     </section>
+
+    <!-- 法条查询 -->
+    <section class="view" data-view="laws" hidden>
+      <h1>法条查询</h1>
+      <form id="form-laws" class="panel">
+        <div class="row" style="display:flex;gap:10px;flex-wrap:wrap;">
+          <input name="q" placeholder="输入关键词(如:善意取得)" style="flex:1;min-width:240px;" />
+          <select name="law" id="law-select"><option value="">全部法律</option></select>
+          <button type="submit">搜索</button>
+        </div>
+      </form>
+      <div id="laws-results" class="panel"></div>
+    </section>
+
+    <!-- 查法条侧边浮层(用于主观题批改页 / 知识点咨询页) -->
+    <div id="law-side-panel" class="panel" hidden
+         style="position:fixed;right:16px;top:64px;width:380px;max-height:80vh;
+                overflow:auto;z-index:50;box-shadow:0 4px 16px rgba(0,0,0,0.12);">
+      <div class="row" style="justify-content:space-between;">
+        <strong id="lsp-title">法条查询</strong>
+        <button type="button" class="muted" id="lsp-close">关闭</button>
+      </div>
+      <div id="lsp-body"></div>
+    </div>
 
     <!-- 设置 -->
     <section class="view" data-view="settings" hidden>

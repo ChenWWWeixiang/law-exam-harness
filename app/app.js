@@ -107,6 +107,8 @@ function showView(name) {
   });
   if (name === 'history') refreshHistory();
   if (name === 'settings') loadConfigForm();
+  if (name === 'search') { refreshTagFilter(); runSearch(); }
+  if (name === 'laws') { initLawsView(); }
 }
 
 window.addEventListener('hashchange', () => {
@@ -539,7 +541,7 @@ document.getElementById('btn-submit-practice').addEventListener('click', async (
       userAnswer: userAnswerParts,
       maxScore: 20,
     });
-    body.innerHTML = renderFeedback(r.feedback);
+    body.innerHTML = renderFeedback(r.feedback, { stem: q.stem });
     // 自动置灰提示:如果本次答对且题在 spaced queue 里
     if (r.autoMarkedMistakes && r.autoMarkedMistakes.length) {
       toast(`✅ 已自动置灰 ${r.autoMarkedMistakes.length} 条错题(答对)`, 'ok');
@@ -564,7 +566,7 @@ document.getElementById('btn-next-practice').addEventListener('click', () => {
   }
 });
 
-function renderFeedback(f) {
+function renderFeedback(f, opts) {
   if (!f) return '';
   if (f.isRelevant === false) {
     return '<div class="reject-banner">🚫 ' + escapeHtml(f.verdict || '本题与法考/法律学习无关,无法批改') + '</div>';
@@ -603,6 +605,11 @@ function renderFeedback(f) {
   if (f.reasoning_content) {
     html += renderReasoningPanel(f.reasoning_content, f.reasoning_tokens);
   }
+  // F4: 查法条按钮(主观题开卷场景)
+  if (opts && opts.stem) {
+    const q = String(opts.stem).slice(0, 30);
+    html += `<div class="actions"><button type="button" class="btn-search-laws" data-q="${escapeHtml(q)}">🔍 查法条</button></div>`;
+  }
   return html;
 }
 
@@ -628,7 +635,7 @@ document.getElementById('form-grade').addEventListener('submit', async (ev) => {
       addToMistakes: f.addToMistakes.checked,
       extremeThinking: f.extremeThinking && f.extremeThinking.checked,
     });
-    body.innerHTML = renderFeedback(r.feedback);
+    body.innerHTML = renderFeedback(r.feedback, { stem: f.stem.value });
     toast(f.addToMistakes.checked ? '已批改并加入错题本' : '已批改', 'ok');
   } catch (e) {
     showError(body, e);
@@ -998,6 +1005,7 @@ document.getElementById('btn-exam-generate').addEventListener('click', async () 
   const multi = parseInt(document.getElementById('exam-multi').value, 10) || 0;
   const essay = parseInt(document.getElementById('exam-essay').value, 10) || 0;
   const extreme = document.getElementById('exam-extreme').checked;
+  const title = (document.getElementById('exam-title').value || '').trim();
   if (single + multi + essay === 0) { toast('至少要生成一种题型的题目', 'warn'); return; }
 
   btn.disabled = true;
@@ -1007,10 +1015,12 @@ document.getElementById('btn-exam-generate').addEventListener('click', async () 
       subject, durationMinutes: duration,
       singleCount: single, multiCount: multi, essayCount: essay,
       extremeThinking: extreme,
+      title,
     });
     exam.durationMinutes = duration;
     exam.timeUp = false;
     showConfirmPage(r.exam);
+    document.getElementById('exam-title').value = '';  // 生成成功后清空,下次不残留
   } catch (e) {
     msg.innerHTML = `<div class="error">⚠️ ${escapeHtml(e.message)}</div>`;
   } finally {
@@ -1032,7 +1042,9 @@ function showConfirmPage(examObj) {
     breakdown[t] = (breakdown[t] || 0) + 1;
   });
   const meta = document.getElementById('exam-confirm-meta');
+  const titleLine = exam.current.title ? `<div>名称 <strong>${escapeHtml(exam.current.title)}</strong></div>` : '';
   meta.innerHTML = `
+    ${titleLine}
     <div>科目 <strong>${escapeHtml(exam.current.subject)}</strong></div>
     <div>题量 <strong>${exam.current.totalQuestions}</strong></div>
     <div>时长 <strong>${exam.durationMinutes}</strong> 分钟</div>
@@ -1055,7 +1067,8 @@ function showConfirmPage(examObj) {
 document.getElementById('btn-exam-start').addEventListener('click', () => {
   document.getElementById('exam-confirm').hidden = true;
   document.getElementById('exam-paper').hidden = false;
-  document.getElementById('exam-paper-title').textContent = `${exam.current.subject} 模拟卷`;
+  document.getElementById('exam-paper-title').textContent =
+    exam.current.title || `${exam.current.subject} 模拟卷`;
   document.getElementById('exam-paper-meta').textContent =
     ` · 共 ${exam.current.totalQuestions} 题 · 时长 ${exam.durationMinutes} 分钟`;
   exam.startTime = Date.now();
@@ -1084,8 +1097,8 @@ document.getElementById('btn-exam-show-history').addEventListener('click', async
         const breakdown = Object.entries(it.typeBreakdown || {}).map(([k,v])=>`${k}×${v}`).join(' ') || '-';
         return `<div class="exam-history-item">
           <div>
-            <strong>${escapeHtml(it.subject)}</strong>
-            <span class="muted">${escapeHtml(it.createdAt)}</span>
+            ${it.title ? `<strong>${escapeHtml(it.title)}</strong><br/>` : ''}
+            <span class="muted">科目 ${escapeHtml(it.subject || '')} · ${escapeHtml(it.createdAt)}</span>
             <div class="muted">${it.totalQuestions} 题 · ${it.durationMinutes} 分钟 · ${breakdown}</div>
           </div>
           <div>
@@ -1499,3 +1512,124 @@ function bindModelSelect() {
     sel.value = cfg.model || sel.value;
   }).catch(() => {});
 }
+
+// ---- F4: 法条查询 ----
+const state_laws = { inited: false };
+
+async function initLawsView() {
+  const sel = document.getElementById('law-select');
+  const results = document.getElementById('laws-results');
+  if (!sel || !results) return;
+  try {
+    const r = await api('GET', '/api/laws');
+    const items = r.items || [];
+    if (!state_laws.inited) {
+      sel.innerHTML = '<option value="">全部法律</option>' +
+        items.map(it => `<option value="${escapeHtml(it.name)}">${escapeHtml(it.name)} (${it.articleCount})</option>`).join('');
+      state_laws.inited = true;
+    }
+    results.innerHTML = items.length
+      ? items.map(it => `<div class="panel" style="margin-bottom:6px;">
+           <strong>${escapeHtml(it.name)}</strong>
+           <span class="muted">${it.articleCount} 条</span>
+         </div>`).join('')
+      : '<p class="muted">法条库为空(server/data/laws.json 缺失)。</p>';
+  } catch (e) { showError(results, e); }
+}
+
+document.getElementById('form-laws').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  const q = (f.q.value || '').trim();
+  const law = (f.law.value || '').trim();
+  const results = document.getElementById('laws-results');
+  if (!q) { results.innerHTML = '<p class="muted">请输入关键词</p>'; return; }
+  results.innerHTML = '<p class="muted">搜索中…</p>';
+  try {
+    const params = new URLSearchParams({ q });
+    if (law) params.set('law', law);
+    const r = await api('GET', '/api/laws/search?' + params.toString());
+    const items = r.items || [];
+    results.innerHTML = items.length
+      ? items.map(it => `
+        <div class="panel" style="margin-bottom:8px;">
+          <div class="row" style="justify-content:space-between;">
+            <strong>《${escapeHtml(it.law)}》 第 ${escapeHtml(it.article)} 条</strong>
+            ${it.sourceUrl ? `<a href="${escapeHtml(it.sourceUrl)}" target="_blank" rel="noopener" class="muted">📖 官方</a>` : ''}
+          </div>
+          <div class="muted">${escapeHtml(it.chapter || '')}</div>
+          <p>${escapeHtml(it.snippet)}</p>
+          <button type="button" class="muted" data-load-law="${escapeHtml(it.law)}" data-load-art="${escapeHtml(it.article)}">查看全文</button>
+        </div>`).join('')
+      : '<p class="muted">未找到相关法条</p>';
+    results.querySelectorAll('[data-load-law]').forEach(btn => {
+      btn.onclick = async () => {
+        try {
+          const detail = await api('GET', `/api/laws/${encodeURIComponent(btn.dataset.loadLaw)}/${encodeURIComponent(btn.dataset.loadArt)}`);
+          const block = document.createElement('div');
+          block.className = 'panel';
+          block.style.background = '#fff';
+          block.style.marginTop = '6px';
+          block.innerHTML = `
+            <h4>《${escapeHtml(detail.law)}》 第 ${escapeHtml(detail.article)} 条</h4>
+            <div class="muted">${escapeHtml(detail.chapter || '')}</div>
+            <div>${renderMarkdownLite(detail.content || '')}</div>
+            ${detail.sourceUrl ? `<a href="${escapeHtml(detail.sourceUrl)}" target="_blank" rel="noopener">📖 查看官方原文</a>` : ''}`;
+          btn.closest('.panel').after(block);
+          btn.remove();
+        } catch (e) { toast(e.message, 'error'); }
+      };
+    });
+  } catch (e) { showError(results, e); }
+});
+
+async function openLawSidePanel(q) {
+  const panel = document.getElementById('law-side-panel');
+  panel.hidden = false;
+  document.getElementById('lsp-title').textContent = '法条查询:' + q;
+  document.getElementById('lsp-body').innerHTML = '<p class="muted">搜索中…</p>';
+  try {
+    const r = await api('GET', '/api/laws/search?q=' + encodeURIComponent(q));
+    const items = r.items || [];
+    document.getElementById('lsp-body').innerHTML = items.length
+      ? items.map(it => `
+        <div class="panel" style="margin-bottom:8px;background:#fff;">
+          <strong>《${escapeHtml(it.law)}》 第 ${escapeHtml(it.article)} 条</strong>
+          <div class="muted">${escapeHtml(it.chapter || '')}</div>
+          <p>${escapeHtml(it.snippet)}</p>
+          <button type="button" class="muted" data-load-law="${escapeHtml(it.law)}" data-load-art="${escapeHtml(it.article)}">查看全文</button>
+        </div>`).join('')
+      : '<p class="muted">未找到相关法条</p>';
+    document.getElementById('lsp-body').querySelectorAll('[data-load-law]').forEach(btn => {
+      btn.onclick = async () => {
+        try {
+          const detail = await api('GET', `/api/laws/${encodeURIComponent(btn.dataset.loadLaw)}/${encodeURIComponent(btn.dataset.loadArt)}`);
+          const block = document.createElement('div');
+          block.style.background = '#f7f9fc';
+          block.style.marginTop = '6px';
+          block.style.padding = '8px';
+          block.innerHTML = `
+            <h4>《${escapeHtml(detail.law)}》 第 ${escapeHtml(detail.article)} 条</h4>
+            <div class="muted">${escapeHtml(detail.chapter || '')}</div>
+            <div>${renderMarkdownLite(detail.content || '')}</div>
+            ${detail.sourceUrl ? `<a href="${escapeHtml(detail.sourceUrl)}" target="_blank" rel="noopener">📖 官方原文</a>` : ''}`;
+          btn.closest('.panel').after(block);
+          btn.remove();
+        } catch (e) { toast(e.message, 'error'); }
+      };
+    });
+  } catch (e) {
+    document.getElementById('lsp-body').innerHTML = `<p class="error">${escapeHtml(e.message)}</p>`;
+  }
+}
+
+document.getElementById('lsp-close').onclick = () => {
+  document.getElementById('law-side-panel').hidden = true;
+};
+
+// 委托:批改结果里的"查法条"按钮
+document.addEventListener('click', (ev) => {
+  const btn = ev.target.closest('.btn-search-laws');
+  if (!btn) return;
+  openLawSidePanel(btn.dataset.q);
+});

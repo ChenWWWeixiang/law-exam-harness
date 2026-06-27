@@ -751,6 +751,16 @@ def delete_exam(exam_id: str) -> bool:
         return cur.rowcount > 0
 
 
+def delete_exam_attempts(exam_id: str) -> int:
+    """删一张试卷对应的所有 exam-mode attempts。返回删除条数。"""
+    with _db() as conn:
+        cur = conn.execute(
+            "DELETE FROM attempts WHERE mode = 'exam' AND exam_id = ?",
+            (exam_id,),
+        )
+        return cur.rowcount
+
+
 # ---- 兼容旧 exam_attempts 的接口(轻量,只 exam 级聚合) ----
 
 def list_exam_attempts() -> list[dict]:

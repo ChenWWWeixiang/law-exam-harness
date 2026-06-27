@@ -21,6 +21,9 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+import json
+from urllib.parse import unquote
+
 from flask import Flask, jsonify, request, send_from_directory
 
 from . import ai_client
@@ -32,6 +35,26 @@ log = logging.getLogger("harness")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 APP_DIR = PROJECT_ROOT / "app"
+
+# ---- 法条库(本地预置) ----
+LAWS_PATH = Path(__file__).resolve().parent / "data" / "laws.json"
+_LAWS_CACHE: dict | None = None
+
+
+def _load_laws() -> dict:
+    """加载 server/data/laws.json(进程内缓存一次)。"""
+    global _LAWS_CACHE
+    if _LAWS_CACHE is None:
+        if not LAWS_PATH.exists():
+            log.warning("laws.json 不存在:%s", LAWS_PATH)
+            _LAWS_CACHE = {}
+        else:
+            try:
+                _LAWS_CACHE = json.loads(LAWS_PATH.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as e:
+                log.error("laws.json 解析失败:%s", e)
+                _LAWS_CACHE = {}
+    return _LAWS_CACHE
 
 
 def create_app() -> Flask:
@@ -340,6 +363,9 @@ def create_app() -> Flask:
             duration_minutes = 90
         avoid_duplicate = bool(body.get("avoidDuplicate"))
         extreme_thinking = bool(body.get("extremeThinking"))
+        title = (body.get("title") or "").strip()
+        if len(title) > 50:
+            return jsonify({"error": "试卷名称不能超过 50 字"}), 400
 
         cfg = storage.load_config()
 
@@ -380,6 +406,7 @@ def create_app() -> Flask:
         exam_record = {
             "id": exam_id,
             "subject": subject,
+            "title": title or None,
             "createdAt": now,
             "durationMinutes": duration_minutes,
             "totalQuestions": len(all_questions),
@@ -413,6 +440,7 @@ def create_app() -> Flask:
             {
                 "id": e.get("id"),
                 "subject": e.get("subject"),
+                "title": e.get("title"),
                 "createdAt": e.get("createdAt"),
                 "durationMinutes": e.get("durationMinutes"),
                 "totalQuestions": e.get("totalQuestions"),
@@ -426,11 +454,8 @@ def create_app() -> Flask:
     @app.delete("/api/exam/<exam_id>")
     def exam_delete(exam_id: str):
         """删除一张历史试卷。"""
-        exams = storage.list_exams()
-        new_exams = [e for e in exams if e.get("id") != exam_id]
-        if len(new_exams) == len(exams):
+        if not storage.delete_exam(exam_id):
             return jsonify({"error": "未找到该考试卷"}), 404
-        storage.save_json(storage.DATA_FILES["exams"], new_exams)
         return jsonify({"ok": True})
 
     # ---- 考试记录(attempt)列表 + 详情 ----
@@ -467,19 +492,85 @@ def create_app() -> Flask:
 
     @app.delete("/api/exam-attempt/<attempt_id>")
     def exam_attempt_delete(attempt_id: str):
-        """删除单次考试记录。"""
-        attempts = storage.list_exam_attempts()
-        new_attempts = [a for a in attempts if a.get("id") != attempt_id]
-        if len(new_attempts) == len(attempts):
+        """删除单次考试记录。attempt_id 通常是 exam_group_<exam_id> 的虚拟 id。"""
+        # 虚拟 id 形态:从 exam_group_X 中解出真实 exam_id,删 attempts 里 mode='exam' AND exam_id=X 的所有行
+        real_exam_id = attempt_id
+        if attempt_id.startswith("exam_group_"):
+            real_exam_id = attempt_id[len("exam_group_"):]
+        deleted = storage.delete_exam_attempts(real_exam_id)
+        if deleted == 0:
             return jsonify({"error": "未找到该考试记录"}), 404
-        storage.save_json(storage.DATA_FILES["exam_attempts"], new_attempts)
-        return jsonify({"ok": True})
+        return jsonify({"ok": True, "deleted": deleted})
 
     # ---- 正确率统计(按题型 / 考点 / 科目) ----
     @app.get("/api/exam-stats")
     def exam_stats():
         """聚合所有 attempts,按 type / topic / subject 三维度统计正确率(SQL JOIN)。"""
         return jsonify(storage.exam_stats())
+
+    # ---- 法条原文查询(本地 laws.json) ----
+    @app.get("/api/laws")
+    def laws_index():
+        """列出所有法律 + 条文数量。"""
+        data = _load_laws()
+        items = [
+            {"name": k, "articleCount": len(v)}
+            for k, v in sorted(data.items())
+        ]
+        return jsonify({"items": items})
+
+    @app.get("/api/laws/search")
+    def laws_search():
+        """按关键词搜索法条(content 或 chapter 含 q)。可选 law 限定法律名。"""
+        q = (request.args.get("q") or "").strip()
+        law_filter = (request.args.get("law") or "").strip()
+        if not q:
+            return jsonify({"items": []})
+        data = _load_laws()
+        out = []
+        for law_name, articles in data.items():
+            if law_filter and law_name != law_filter:
+                continue
+            for art_no, art in articles.items():
+                content = art.get("content", "") or ""
+                chapter = art.get("chapter", "") or ""
+                if q in content or q in chapter:
+                    idx = content.find(q)
+                    if idx < 0:
+                        snippet = content[:80] + ("…" if len(content) > 80 else "")
+                    else:
+                        start = max(0, idx - 20)
+                        end = min(len(content), idx + 80)
+                        snippet = ("…" if start > 0 else "") + content[start:end] + ("…" if end < len(content) else "")
+                    out.append({
+                        "law": law_name,
+                        "article": art_no,
+                        "chapter": chapter,
+                        "snippet": snippet,
+                        "sourceUrl": art.get("source_url", ""),
+                    })
+                    if len(out) >= 80:
+                        break
+            if len(out) >= 80:
+                break
+        return jsonify({"items": out})
+
+    @app.get("/api/laws/<law_name>/<article_no>")
+    def law_article(law_name: str, article_no: str):
+        """单条法条全文。law_name 支持 URL encode;article_no 用原文章号(如 民法典 的 '116')。"""
+        law_name = unquote(law_name)
+        data = _load_laws()
+        # 兼用两种 key 形态:原 article_no 字符串 / "公司法-1" 这种
+        art = data.get(law_name, {}).get(article_no) or data.get(law_name, {}).get(str(article_no))
+        if not art:
+            return jsonify({"error": "未找到该法条"}), 404
+        return jsonify({
+            "law": law_name,
+            "article": article_no,
+            "chapter": art.get("chapter", ""),
+            "content": art.get("content", ""),
+            "sourceUrl": art.get("source_url", ""),
+        })
 
     # ---- 新:详情接口(基于 SQLite JOIN) ----
     @app.get("/api/question/<qid>")

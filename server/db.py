@@ -28,7 +28,7 @@ LEGACY_JSON_FILES = {
     "exam_attempts": DATA_DIR / "exam_attempts.json",
 }
 
-CURRENT_SCHEMA_VERSION = "2"
+CURRENT_SCHEMA_VERSION = "3"
 
 
 # ---- Schema 定义 ----
@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS questions (
     rubric_json     TEXT,           -- JSON:[{"id","points","criterion","hit","reason"}]
     key_points_json TEXT,           -- JSON 数组
     pitfalls_json   TEXT,           -- JSON 数组
+    tags_json       TEXT,           -- JSON 数组:["tag1","tag2"],用户手动打的标签
     created_at      TEXT NOT NULL
 );
 
@@ -161,6 +162,10 @@ def init_schema() -> None:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(mistakes)").fetchall()}
         if "auto_practice" not in cols:
             conn.execute("ALTER TABLE mistakes ADD COLUMN auto_practice INTEGER NOT NULL DEFAULT 0")
+        # F1: questions 表加 tags_json 列(老题 tags=[])
+        qcols = {r["name"] for r in conn.execute("PRAGMA table_info(questions)").fetchall()}
+        if "tags_json" not in qcols:
+            conn.execute("ALTER TABLE questions ADD COLUMN tags_json TEXT")
         # 写 schema_version
         conn.execute(
             "INSERT OR REPLACE INTO schema_meta(key, value) VALUES('schema_version', ?)",
