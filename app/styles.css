@@ -369,3 +369,71 @@ details.reasoning pre {
 }
 .chat-role { font-size: 11px; color: #888; margin-bottom: 4px; }
 .chat-content { white-space: pre-wrap; }
+
+
+/* ---- F1 题库检索:tag chip + search-card ---- */
+.tag-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 8px; border-radius: 999px;
+  background: #5856d6; color: #fff;
+  font-size: 11px; cursor: pointer; user-select: none;
+}
+.tag-chip:hover { opacity: 0.85; }
+.tag-chip.removable::after { content: "×"; font-weight: bold; margin-left: 2px; }
+.tag-chip.inactive { background: #c7c7cc; color: #fff; }
+.tag-chip.muted { background: #e5e5ea; color: #333; }
+.tag-chip.muted:hover { background: #d1d1d6; }
+
+.search-card {
+  border: 1px solid #e5e5ea; border-radius: 6px; padding: 10px;
+  margin-bottom: 8px; background: #fff;
+}
+.search-card .qhead {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px;
+  color: #555; margin-bottom: 6px;
+}
+.search-card .qhead input[type="checkbox"] { width: auto; margin-right: 4px; }
+.search-card .qstem { margin: 4px 0; line-height: 1.5; }
+.search-card .qopts { font-size: 13px; color: #333; padding-left: 18px; }
+.search-card .tag-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.search-card .qfooter { display: flex; gap: 8px; margin-top: 6px; }
+
+
+/* ---- F5: 法条常驻侧边栏 ---- */
+#law-side-panel {
+  position: fixed !important;
+  right: 16px; top: 64px;
+  width: 380px; max-height: 80vh;
+  overflow: auto;
+  z-index: 50;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  background: #fff;
+  border-radius: 8px;
+  padding: 10px;
+}
+#law-side-panel .law-item {
+  border-bottom: 1px solid #f0f0f0;
+  padding: 6px 4px;
+  cursor: pointer;
+}
+#law-side-panel .law-item:hover { background: #f7f9ff; }
+#law-side-panel .law-name { font-weight: 600; }
+#law-side-panel .law-meta { color: #888; font-size: 11px; }
+#law-side-panel .article-link {
+  display: inline-block; padding: 1px 6px; margin: 2px 2px;
+  border: 1px solid #d1d1d6; border-radius: 4px; font-size: 12px;
+  cursor: pointer; background: #fff;
+}
+#law-side-panel .article-link:hover { background: #e7f0ff; border-color: #0a84ff; }
+#law-side-panel .article-full {
+  background: #fafafa; border-left: 3px solid #0a84ff;
+  padding: 8px 10px; margin-top: 6px; font-size: 13px; line-height: 1.6;
+  white-space: pre-wrap;
+}
+#law-side-panel .article-full h5 {
+  margin: 0 0 4px; font-size: 13px; color: #0a84ff;
+}
+#law-side-panel .article-full .src-link {
+  display: inline-block; margin-top: 6px; font-size: 11px; color: #888;
+}
+#btn-law-rail-toggle.active { background: #0a84ff; color: #fff; }

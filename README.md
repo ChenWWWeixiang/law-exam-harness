@@ -194,4 +194,4 @@ Schema 已为以下扩展预留:
 - 错题复习模式:基于 mistakes 自动出重做卷
 
 ---
-用 minimax-m3 模型设计和开发
+power by deepseek v4 flash + Minimax M3

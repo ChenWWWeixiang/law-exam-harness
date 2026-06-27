@@ -115,8 +115,8 @@ def append_question(question: dict) -> None:
             INSERT OR REPLACE INTO questions(
                 id, subject, topic, type, difficulty, stem,
                 options_json, answer, explanation,
-                rubric_json, key_points_json, pitfalls_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                rubric_json, key_points_json, pitfalls_json, tags_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             qid,
             question.get("subject", ""),
@@ -130,6 +130,7 @@ def append_question(question: dict) -> None:
             jdump(question.get("rubric", [])),
             jdump(question.get("keyPoints", [])),
             jdump(question.get("pitfalls", [])),
+            jdump(question.get("tags", [])),
             now,
         ))
 
@@ -144,8 +145,8 @@ def append_questions(questions: list[dict]) -> None:
                 INSERT OR REPLACE INTO questions(
                     id, subject, topic, type, difficulty, stem,
                     options_json, answer, explanation,
-                    rubric_json, key_points_json, pitfalls_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    rubric_json, key_points_json, pitfalls_json, tags_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 qid,
                 q.get("subject", ""),
@@ -159,6 +160,7 @@ def append_questions(questions: list[dict]) -> None:
                 jdump(q.get("rubric", [])),
                 jdump(q.get("keyPoints", [])),
                 jdump(q.get("pitfalls", [])),
+                jdump(q.get("tags", [])),
                 now,
             ))
 
@@ -177,6 +179,7 @@ def _row_to_question(row: sqlite3.Row) -> dict:
         "rubric": jload(row["rubric_json"], []),
         "keyPoints": jload(row["key_points_json"], []),
         "pitfalls": jload(row["pitfalls_json"], []),
+        "tags": jload(row["tags_json"], []) or [],
         "createdAt": row["created_at"],
     }
 
@@ -211,6 +214,185 @@ def question_summaries_for_dedup(subject: str, topic: str, limit: int = 30) -> l
             ORDER BY created_at DESC LIMIT ?
         """, (subject, topic, limit)).fetchall()
         return [r["stem"][:120] for r in rows]
+
+
+# ---- F1: 检索 + 标签 ----
+
+def search_questions(q: str, subject: str | None, topic: str | None, tags: list[str] | None, limit: int = 50) -> list[dict]:
+    """题库 LIKE 检索。可按 subject/topic/tags 过滤。tags 用 JSON 字串包含匹配。"""
+    sql = "SELECT * FROM questions WHERE 1=1"
+    args: list = []
+    if q:
+        like = f"%{q}%"
+        sql += (" AND (stem LIKE ? OR options_json LIKE ? OR answer LIKE ? "
+                "OR explanation LIKE ? OR subject LIKE ? OR topic LIKE ?)")
+        args += [like] * 6
+    if subject:
+        sql += " AND subject = ?"
+        args.append(subject)
+    if topic:
+        sql += " AND topic = ?"
+        args.append(topic)
+    if tags:
+        for t in tags:
+            sql += ' AND tags_json LIKE ?'
+            args.append(f'%"{t}"%')
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    args.append(limit)
+    with _db() as conn:
+        return [_row_to_question(r) for r in conn.execute(sql, args).fetchall()]
+
+
+def _row_to_mistake_full(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "attemptId": row["attempt_id"],
+        "questionId": row["question_id"],
+        "addedAt": row["added_at"],
+        "reason": row["reason"],
+        "reviewed": bool(row["reviewed"]),
+        "autoPractice": bool(row["auto_practice"]),
+        "userAnswer": row["user_answer"],
+        "score": row["score"],
+        "maxScore": row["max_score"],
+        "isCorrect": bool(row["is_correct"]),
+        "answeredAt": row["submitted_at"],
+        "subject": row["q_subject"],
+        "topic": row["q_topic"],
+        "type": row["q_type"],
+        "difficulty": row["q_difficulty"],
+        "stem": row["q_stem"],
+    }
+
+
+def search_mistakes(q: str, subject: str | None, topic: str | None, limit: int = 50) -> list[dict]:
+    """错题 LIKE 检索(关联 attempts + questions)。"""
+    sql = """
+        SELECT m.id, m.attempt_id, m.reason, m.reviewed, m.auto_practice, m.added_at,
+               a.question_id, a.user_answer, a.score, a.max_score, a.submitted_at, a.is_correct,
+               q.subject AS q_subject, q.topic AS q_topic, q.type AS q_type,
+               q.difficulty AS q_difficulty, q.stem AS q_stem
+        FROM mistakes m
+        JOIN attempts a ON a.id = m.attempt_id
+        LEFT JOIN questions q ON q.id = a.question_id
+        WHERE 1=1
+    """
+    args: list = []
+    if q:
+        like = f"%{q}%"
+        sql += (" AND (q.stem LIKE ? OR a.user_answer LIKE ? OR q.answer LIKE ? "
+                "OR q.explanation LIKE ? OR q.subject LIKE ? OR q.topic LIKE ?)")
+        args += [like] * 6
+    if subject:
+        sql += " AND q.subject = ?"
+        args.append(subject)
+    if topic:
+        sql += " AND q.topic = ?"
+        args.append(topic)
+    sql += " ORDER BY m.added_at DESC LIMIT ?"
+    args.append(limit)
+    with _db() as conn:
+        return [_row_to_mistake_full(r) for r in conn.execute(sql, args).fetchall()]
+
+
+def set_question_tags(qid: str, tags: list[str]) -> bool:
+    """替换一道题的标签集合。"""
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE questions SET tags_json=? WHERE id=?",
+            (jdump(tags), qid),
+        )
+        return cur.rowcount > 0
+
+
+def add_tags_batch(qids: list[str], new_tags: list[str]) -> int:
+    """批量并集追加标签(去重)。返回成功更新的题目数。"""
+    if not qids or not new_tags:
+        return 0
+    n = 0
+    with _db() as conn:
+        for qid in qids:
+            row = conn.execute("SELECT tags_json FROM questions WHERE id=?", (qid,)).fetchone()
+            if not row:
+                continue
+            old = set(jload(row["tags_json"], []) or [])
+            merged = sorted(old | set(new_tags))
+            conn.execute(
+                "UPDATE questions SET tags_json=? WHERE id=?",
+                (jdump(merged), qid),
+            )
+            n += 1
+    return n
+
+
+def remove_tag_from_question(qid: str, tag: str) -> list[str] | None:
+    """从一道题移除一个 tag。返回更新后的标签列表;题目不存在返 None。"""
+    with _db() as conn:
+        row = conn.execute("SELECT tags_json FROM questions WHERE id=?", (qid,)).fetchone()
+        if not row:
+            return None
+        old = jload(row["tags_json"], []) or []
+        new = [t for t in old if t != tag]
+        conn.execute(
+            "UPDATE questions SET tags_json=? WHERE id=?",
+            (jdump(new), qid),
+        )
+        return new
+
+
+def list_all_tags() -> list[dict]:
+    """统计所有出现过的标签 + 题数(按数量倒序)。"""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT tags_json FROM questions WHERE tags_json IS NOT NULL"
+        ).fetchall()
+    counts: dict[str, int] = {}
+    for r in rows:
+        for t in jload(r["tags_json"], []) or []:
+            counts[t] = counts.get(t, 0) + 1
+    return [{"name": k, "count": v} for k, v in sorted(counts.items(), key=lambda x: (-x[1], x[0]))]
+
+
+# ---- F3: 错题复习出卷 ----
+
+def pick_review_questions(subject: str | None, topic: str | None, include_reviewed: bool, max_n: int) -> list[dict]:
+    """从 mistakes 表挑一批题(关联原 question)用于出复习卷。
+    include_reviewed=False 时只挑未掌握的错题。
+    """
+    sql = """
+        SELECT q.id, q.subject, q.topic, q.type, q.difficulty, q.stem,
+               q.options_json, q.answer, q.explanation,
+               m.id AS mistake_id
+        FROM mistakes m
+        JOIN attempts a ON a.id = m.attempt_id
+        JOIN questions q ON q.id = a.question_id
+        WHERE 1=1
+    """
+    args: list = []
+    if not include_reviewed:
+        sql += " AND m.reviewed = 0"
+    if subject:
+        sql += " AND q.subject = ?"
+        args.append(subject)
+    if topic:
+        sql += " AND q.topic = ?"
+        args.append(topic)
+    sql += " ORDER BY m.added_at DESC LIMIT ?"
+    args.append(max_n)
+    with _db() as conn:
+        rows = conn.execute(sql, args).fetchall()
+    return [{
+        "id": r["id"],
+        "subject": r["subject"],
+        "topic": r["topic"],
+        "type": r["type"],
+        "difficulty": r["difficulty"],
+        "stem": r["stem"],
+        "options": jload(r["options_json"], []),
+        "answer": r["answer"],
+        "explanation": r["explanation"],
+        "_mistakeId": r["mistake_id"],
+    } for r in rows]
 
 
 # ---- 答题(attempts) ----
@@ -586,13 +768,37 @@ def append_exam(exam: dict) -> None:
         ))
         # 关联表
         for q in questions:
-            qid = q["id"]
+            qid = q.get("id") or gen_id("q")
+            q["id"] = qid  # 写回,确保 exam_questions FK + 后续 get_exam_full 一致
             snapshot = {
                 "stem": q.get("stem", ""),
                 "options": q.get("options", []),
                 "answer": q.get("answer", ""),
                 "explanation": q.get("explanation", ""),
             }
+            # 同时把题插进 questions(若还没有)——exam_questions FK 要求 question 行存在
+            conn.execute("""
+                INSERT OR IGNORE INTO questions(
+                    id, subject, topic, type, difficulty, stem,
+                    options_json, answer, explanation,
+                    rubric_json, key_points_json, pitfalls_json, tags_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                qid,
+                q.get("subject") or exam.get("subject", ""),
+                q.get("topic", ""),
+                q.get("type", ""),
+                q.get("difficulty", ""),
+                q.get("stem", ""),
+                jdump(q.get("options", [])),
+                q.get("answer", ""),
+                q.get("explanation", ""),
+                jdump(q.get("rubric", [])),
+                jdump(q.get("keyPoints", [])),
+                jdump(q.get("pitfalls", [])),
+                jdump(q.get("tags", [])),
+                now,
+            ))
             conn.execute("""
                 INSERT OR REPLACE INTO exam_questions(
                     exam_id, question_id, exam_no, section, max_score, snapshot_json
@@ -949,6 +1155,10 @@ def delete_history_item(kind: str, item_id: str) -> bool:
     """统一删除入口(历史 tab 用)。"""
     if kind == "questions":
         with _db() as conn:
+            # 先删关联的 exam_questions(ON DELETE RESTRICT 阻止直接删题)
+            conn.execute("DELETE FROM exam_questions WHERE question_id = ?", (item_id,))
+            # 删关联的 attempts(mode='exam' 的那些 + question_id 关联的)
+            conn.execute("DELETE FROM attempts WHERE question_id = ?", (item_id,))
             cur = conn.execute("DELETE FROM questions WHERE id = ?", (item_id,))
             return cur.rowcount > 0
     elif kind == "answers":

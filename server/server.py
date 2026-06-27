@@ -572,6 +572,20 @@ def create_app() -> Flask:
             "sourceUrl": art.get("source_url", ""),
         })
 
+    @app.get("/api/laws/<law_name>/articles")
+    def law_articles_index(law_name: str):
+        """列出某部法律的全部条号 + 章名(给侧边栏索引用)。"""
+        law_name = unquote(law_name)
+        data = _load_laws()
+        arts = data.get(law_name, {})
+        items = [{"article": k, "chapter": v.get("chapter", "")} for k, v in arts.items()]
+        # 排序:纯数字按 int,其他按字符串
+        def _key(it):
+            try: return (0, int(it["article"]), "")
+            except (ValueError, TypeError): return (1, 0, it["article"])
+        items.sort(key=_key)
+        return jsonify({"law": law_name, "items": items})
+
     # ---- 新:详情接口(基于 SQLite JOIN) ----
     @app.get("/api/question/<qid>")
     def question_detail(qid: str):
@@ -785,6 +799,117 @@ def create_app() -> Flask:
         except (TypeError, ValueError):
             limit = 10
         return jsonify({"items": storage.list_spaced_practice_queue(limit=limit)})
+
+    # ---- F1: 题库检索 + 标签 ----
+    @app.get("/api/search")
+    def search():
+        """统一检索:题库 / 错题。参数 type=questions|mistakes, q, subject, topic, tags(逗号分隔), limit。"""
+        kind = (request.args.get("type") or "questions").strip()
+        q = (request.args.get("q") or "").strip()
+        subject = (request.args.get("subject") or "").strip() or None
+        topic = (request.args.get("topic") or "").strip() or None
+        tags_raw = (request.args.get("tags") or "").strip()
+        tags = [t.strip() for t in tags_raw.split(",") if t.strip()] if tags_raw else None
+        try:
+            limit = int(request.args.get("limit", 50))
+        except (TypeError, ValueError):
+            limit = 50
+        limit = max(1, min(limit, 200))
+        if kind == "mistakes":
+            items = storage.search_mistakes(q, subject, topic, limit)
+        else:
+            items = storage.search_questions(q, subject, topic, tags, limit)
+        return jsonify({"items": items, "type": kind, "count": len(items)})
+
+    @app.get("/api/tags")
+    def tags_list():
+        """所有出现过的标签 + 题数。"""
+        return jsonify({"items": storage.list_all_tags()})
+
+    @app.post("/api/question/<qid>/tags")
+    def question_set_tags(qid: str):
+        """替换一道题的标签集合。body: {"tags": ["tag1","tag2"]}"""
+        body = request.get_json(silent=True) or {}
+        tags = body.get("tags") or []
+        if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+            return jsonify({"error": "tags 必须是字符串数组"}), 400
+        clean = sorted({t.strip()[:20] for t in tags if t.strip()})[:20]
+        if not storage.set_question_tags(qid, clean):
+            return jsonify({"error": "未找到该题目"}), 404
+        return jsonify({"ok": True, "tags": clean})
+
+    @app.delete("/api/question/<qid>/tag/<tag>")
+    def question_remove_tag(qid: str, tag: str):
+        """从一道题移除一个 tag。"""
+        from urllib.parse import unquote as _unq
+        tag = _unq(tag)
+        new_tags = storage.remove_tag_from_question(qid, tag)
+        if new_tags is None:
+            return jsonify({"error": "未找到该题目"}), 404
+        return jsonify({"ok": True, "tags": new_tags})
+
+    @app.post("/api/questions/batch-tags")
+    def questions_batch_tags():
+        """批量并集追加标签。body: {"ids": ["q1","q2"], "addTags": ["重点","难点"]}"""
+        body = request.get_json(silent=True) or {}
+        qids = body.get("ids") or []
+        add = body.get("addTags") or []
+        if not isinstance(qids, list) or not qids:
+            return jsonify({"error": "ids 必填且非空"}), 400
+        if not isinstance(add, list):
+            return jsonify({"error": "addTags 必须是数组"}), 400
+        clean = [t.strip()[:20] for t in add if isinstance(t, str) and t.strip()][:20]
+        if not clean:
+            return jsonify({"ok": True, "affected": 0, "tags": []})
+        n = storage.add_tags_batch(qids, clean)
+        return jsonify({"ok": True, "affected": n, "tags": clean})
+
+    # ---- F3: 错题复习出卷 ----
+    @app.post("/api/exam/review-mistakes")
+    def exam_review_mistakes():
+        """从错题池挑一批题打包成一张复习卷,复用现有 exam 流程。"""
+        body = request.get_json(silent=True) or {}
+        include_reviewed = bool(body.get("includeReviewed", False))
+        try:
+            max_n = int(body.get("maxQuestions", 15))
+        except (TypeError, ValueError):
+            max_n = 15
+        max_n = max(3, min(max_n, 30))
+        subject = (body.get("subject") or "").strip() or None
+        topic = (body.get("topic") or "").strip() or None
+
+        picked = storage.pick_review_questions(subject, topic, include_reviewed, max_n)
+        if not picked:
+            return jsonify({"error": "没有符合条件的错题"}), 400
+
+        from .storage import gen_id
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        suffix = subject or topic or "综合"
+        # 每题加 examQuestionNo + 默认 max_score
+        questions: list[dict] = []
+        for i, q in enumerate(picked, 1):
+            q = dict(q)  # copy
+            q["examQuestionNo"] = i
+            # 不带 _mistakeId 到 questions(append_exam 只需要 schema 字段)
+            q.pop("_mistakeId", None)
+            questions.append(q)
+        record = {
+            "id": gen_id("exam"),
+            "subject": subject or "错题复习",
+            "title": f"错题复习-{suffix}-{now[:10]}",
+            "createdAt": now,
+            "durationMinutes": max(30, len(questions) * 4),
+            "totalQuestions": len(questions),
+            "questions": questions,
+            "config": {
+                "kind": "review",
+                "includeReviewed": include_reviewed,
+                "filterSubject": subject,
+                "filterTopic": topic,
+            },
+        }
+        storage.append_exam(record)
+        return jsonify({"exam": storage.get_exam_full(record["id"])})
 
     # ---- 静态资源(SPA) ----
     @app.get("/")

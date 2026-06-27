@@ -21,6 +21,7 @@
       <a href="#settings" data-route="settings">设置</a>
     </nav>
     <div class="topbar-right">
+      <button type="button" id="btn-law-rail-toggle" title="法条常驻栏(可折叠)" class="muted">📖 法条</button>
       <label class="model-select-label">
         模型
         <select id="model-select">
@@ -156,6 +157,7 @@
             <div id="practice-options" class="options"></div>
             <label>你的答案
               <textarea id="practice-answer" rows="5"></textarea>
+              <span class="muted" style="font-size:12px;">  <button type="button" class="btn-open-law-rail muted" style="font-size:12px;">📖 打开法条栏</button></span>
             </label>
             <label class="row">
               <input type="file" id="practice-image" accept="image/*" multiple />
@@ -248,6 +250,7 @@
             <div id="exam-q-options" class="options"></div>
             <label>你的答案
               <textarea id="exam-q-answer" rows="6"></textarea>
+              <span class="muted" style="font-size:12px;">  <button type="button" class="btn-open-law-rail muted" style="font-size:12px;">📖 打开法条栏</button></span>
             </label>
             <div class="actions exam-nav">
               <button id="btn-exam-prev" type="button">← 上一题</button>
@@ -358,6 +361,49 @@
       <div id="history-list" class="panel"></div>
     </section>
 
+    <!-- 题库检索 -->
+    <section class="view" data-view="search" hidden>
+      <h1>题库检索</h1>
+      <form id="form-search" class="panel">
+        <div class="row" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <label class="row" style="gap:6px;">
+            <input type="radio" name="kind" value="questions" checked/> 题库
+            <input type="radio" name="kind" value="mistakes" style="margin-left:8px;"/> 错题
+          </label>
+          <input name="q" placeholder="关键词(题干/选项/答案/解析/科目/考点)" style="flex:1;min-width:240px;"/>
+          <select name="subject">
+            <option value="">全部科目</option>
+            <option>民法</option><option>刑法</option><option>行政法</option>
+            <option>民事诉讼法</option><option>刑事诉讼法</option>
+            <option>商经法</option><option>理论法</option><option>三国法</option>
+          </select>
+          <input name="topic" placeholder="考点(可选)" style="width:140px;"/>
+          <button type="submit">搜索</button>
+        </div>
+        <div id="search-tags-filter" class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px;"></div>
+        <div id="search-batch-bar" class="row" hidden style="margin-top:8px;gap:8px;align-items:center;">
+          <span class="muted" id="search-batch-count">已选 0 题</span>
+          <button type="button" id="btn-open-tag-editor">🏷️ 打标签</button>
+          <button type="button" class="muted" id="btn-clear-selection">清空选择</button>
+        </div>
+        <div id="tag-editor" class="panel" hidden style="background:#f0f7ff;margin-top:8px;">
+          <div class="row" style="flex-wrap:wrap;gap:8px;align-items:center;">
+            <span class="muted">已有标签:</span>
+            <div id="tag-existing-chips" class="row" style="flex-wrap:wrap;gap:6px;"></div>
+          </div>
+          <label style="margin-top:6px;">新增标签(逗号或回车分隔)
+            <input id="tag-new-input" placeholder="如:善意取得,诉讼时效" />
+          </label>
+          <div class="actions">
+            <button type="button" id="btn-apply-tag-batch">应用到所选题目</button>
+            <button type="button" class="muted" id="btn-close-tag-editor">取消</button>
+          </div>
+          <div id="tag-editor-msg" class="muted"></div>
+        </div>
+      </form>
+      <div id="search-results" class="panel"></div>
+    </section>
+
     <!-- 法条查询 -->
     <section class="view" data-view="laws" hidden>
       <h1>法条查询</h1>
@@ -372,15 +418,20 @@
     </section>
 
     <!-- 查法条侧边浮层(用于主观题批改页 / 知识点咨询页) -->
-    <div id="law-side-panel" class="panel" hidden
+    <aside id="law-side-panel" class="panel" hidden
          style="position:fixed;right:16px;top:64px;width:380px;max-height:80vh;
                 overflow:auto;z-index:50;box-shadow:0 4px 16px rgba(0,0,0,0.12);">
       <div class="row" style="justify-content:space-between;">
-        <strong id="lsp-title">法条查询</strong>
-        <button type="button" class="muted" id="lsp-close">关闭</button>
+        <strong id="lsp-title">📖 法条</strong>
+        <button type="button" class="muted" id="lsp-close" title="折叠法条栏(可从右上角重新打开)">×</button>
       </div>
+      <form id="lsp-form" class="row" style="margin:6px 0;gap:6px;flex-wrap:wrap;">
+        <input name="q" id="lsp-q" placeholder="关键词(留空浏览索引)" style="flex:1;min-width:140px;"/>
+        <select name="law" id="lsp-law-select" style="max-width:130px;"><option value="">全部</option></select>
+        <button type="submit">搜索</button>
+      </form>
       <div id="lsp-body"></div>
-    </div>
+    </aside>
 
     <!-- 设置 -->
     <section class="view" data-view="settings" hidden>

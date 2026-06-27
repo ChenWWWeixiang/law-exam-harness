@@ -21,3 +21,6 @@ content/
 每个 Markdown 文件可包含:概念、构成要件、易错点、例题、笔记等结构化内容。
 
 MVP 阶段通过 `/api/chat` 的 `subject` 字段选择科目,内容文件本身不影响 AI 回答 — 它们将在后续接入 RAG 检索时作为知识源被向量化与检索。
+
+---- 
+power by deepseek v4 flash + Minimax M3
