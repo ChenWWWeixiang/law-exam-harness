@@ -137,6 +137,7 @@ def create_app() -> Flask:
             web_search_results=search_results or None,
             cfg=cfg,
             extreme_thinking=extreme_thinking,
+            history_messages=_load_session_history(conversation_id) if conversation_id else None,
         )
 
         # 超长思考模式提示
@@ -178,6 +179,11 @@ def create_app() -> Flask:
             storage.question_summaries_for_dedup(subject, topic)
             if avoid_duplicate else []
         )
+        # 错题去重:把错题对应题目的题干摘要也注入 history(模型会避开类似案例)
+        if avoid_duplicate:
+            mistake_stems = storage.mistake_question_summaries_for_dedup(subject, topic)
+            # 错题的去重提示放在更显眼的位置(放最前)
+            history = [f"⚠️ 错题本已有(必须避开):{s}" for s in mistake_stems] + history
 
         extreme_thinking = bool(body.get("extremeThinking"))
         questions = ai_client.call_generate_questions(
@@ -195,6 +201,8 @@ def create_app() -> Flask:
         if extreme_thinking:
             resp["extremeThinking"] = True
             resp["warning"] = "已启用超长思考模式,响应可能需要 30 秒以上"
+        if avoid_duplicate and any("错题本已有" in s for s in history):
+            resp["warning"] = (resp.get("warning", "") + " · 已避开错题本中同类题").strip(" ·")
         return jsonify(resp)
 
     # ---- 批改 ----
@@ -300,7 +308,17 @@ def create_app() -> Flask:
                 "reviewed": False,
             })
 
-        return jsonify({"answer": answer_record, "feedback": feedback, "attemptId": attempt_id})
+        # 错题自动置灰:如果本次答对,且该题之前在 spaced queue(错题表 auto_practice=1)里 → 标记 reviewed=1
+        # 题目 id 可能缺(比如即时出题后批改),没有则跳过
+        qid_for_review = question.get("id", "")
+        auto_marked_ids: list[str] = []
+        if qid_for_review and attempt_record["is_correct"]:
+            auto_marked_ids = storage.mark_mistake_reviewed_if_in_queue(qid_for_review)
+
+        resp = {"answer": answer_record, "feedback": feedback, "attemptId": attempt_id}
+        if auto_marked_ids:
+            resp["autoMarkedMistakes"] = auto_marked_ids
+        return jsonify(resp)
 
     # ---- 历史 ----
     # ---- 模拟考试 ----
@@ -645,6 +663,38 @@ def create_app() -> Flask:
                 return jsonify({"session": s})
         return jsonify({"error": "未找到该会话"}), 404
 
+    # ---- 错题本扩展接口 ----
+    @app.get("/api/mistake-stats")
+    def mistake_stats():
+        """错题三维度统计 + 总览(已掌握 / 未掌握 / spaced queue 数量)。"""
+        return jsonify(storage.mistake_stats())
+
+    @app.post("/api/mistake/<mistake_id>/toggle-auto")
+    def mistake_toggle_auto(mistake_id: str):
+        """切换错题的"自动加入未来练习"标志;返回新的状态。"""
+        body = request.get_json(silent=True) or {}
+        # 显式传 auto=true/false;不传则翻转
+        if "auto" in body:
+            new_val = bool(body.get("auto"))
+        else:
+            current = next((m for m in storage.list_mistakes() if m["id"] == mistake_id), None)
+            if not current:
+                return jsonify({"error": "未找到该错题"}), 404
+            new_val = not current.get("autoPractice", False)
+        ok = storage.set_mistake_auto_practice(mistake_id, new_val)
+        if not ok:
+            return jsonify({"error": "未找到该错题"}), 404
+        return jsonify({"ok": True, "autoPractice": new_val})
+
+    @app.get("/api/spaced-queue")
+    def spaced_queue():
+        """拉取 spaced queue 中的题目(已勾选 auto_practice 且未掌握的错题对应题目)。"""
+        try:
+            limit = int(request.args.get("limit", 10))
+        except (TypeError, ValueError):
+            limit = 10
+        return jsonify({"items": storage.list_spaced_practice_queue(limit=limit)})
+
     # ---- 静态资源(SPA) ----
     @app.get("/")
     def index():
@@ -652,6 +702,9 @@ def create_app() -> Flask:
 
     @app.get("/<path:filename>")
     def static_files(filename: str):
+        # /api/* 不应落到静态 catch-all;返回 JSON 404
+        if filename.startswith("api/") or filename == "api":
+            return jsonify({"error": "not found", "path": f"/{filename}"}), 404
         # 防止跳出 app/ 目录
         target = (APP_DIR / filename).resolve()
         if APP_DIR.resolve() not in target.parents and target != APP_DIR.resolve():
@@ -703,6 +756,18 @@ def _append_message(session_id: str, role: str, content: str, *, subject: str = 
     target["messages"].append(msg)
     # 落 SQLite(替代旧的 save_json 走 JSON 文件)
     storage._append_message(session_id, role, content, subject=subject, sources=sources or [])
+
+
+def _load_session_history(session_id: str) -> list[dict]:
+    """读取一个会话已有的 user/assistant 消息,用于给 AI 提供多轮上下文。"""
+    for s in storage.list_sessions():
+        if s.get("id") == session_id:
+            return [
+                {"role": m.get("role"), "content": m.get("content", "")}
+                for m in (s.get("messages") or [])
+                if m.get("role") in ("user", "assistant") and m.get("content")
+            ]
+    return []
 
 
 if __name__ == "__main__":

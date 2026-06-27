@@ -52,6 +52,8 @@ JSON Schema:
 EXPLAIN_USER_TEMPLATE = """科目:{subject}
 回答风格:{style}
 
+{history_block}
+
 问题:
 {question}
 

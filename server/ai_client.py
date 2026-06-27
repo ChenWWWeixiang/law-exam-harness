@@ -228,11 +228,15 @@ def call_explain(
     web_search_results: list[dict] | None = None,
     cfg: dict | None = None,
     extreme_thinking: bool = False,
+    history_messages: list[dict] | None = None,
 ) -> dict:
     """知识点咨询。返回 {answer, summary, pitfalls, examples, sources, warnings, reasoning_content}。
 
     支持图片输入:question 可以传 list[str](含 data URL)。
     注意:DeepSeek v4-flash 当前不支持多模态,切换到 v4-pro 后自动可用。
+
+    history_messages: 可选历史对话 [{role: user|assistant, content: str}, ...],
+    若提供则按顺序注入到 system 之后、本次问题之前,让模型看到上下文。
     """
     cfg = cfg if cfg is not None else load_runtime_config()
     if extreme_thinking:
@@ -255,15 +259,44 @@ def call_explain(
         text_question = question.strip()
         has_images = False
 
+    # 历史对话 → 注入到 user 消息的 history_block
+    # 同时把每一对 user/assistant 作为单独的 message 追加,让模型看到完整多轮上下文
+    history_messages = history_messages or []
+    if history_messages:
+        lines = ["以下是之前的对话历史,请基于此上下文继续回答本次提问:"]
+        for m in history_messages:
+            role = m.get("role")
+            content = (m.get("content") or "").strip()
+            if not content:
+                continue
+            label = "用户" if role == "user" else "AI"
+            # 截断过长的历史,避免单次 prompt 膨胀
+            if len(content) > 1500:
+                content = content[:1500] + "…(已截断)"
+            lines.append(f"[{label}]: {content}")
+        history_block = "\n".join(lines)
+    else:
+        history_block = "(无历史对话)"
+
     user_text = prompts.EXPLAIN_USER_TEMPLATE.format(
         subject=subject or "不限科目",
         style=style or "简明解释",
         question=text_question,
         search_block=search_block,
+        history_block=history_block,
     )
 
     def make_messages(temp: float):
         messages = [{"role": "system", "content": prompts.EXPLAIN_SYSTEM}]
+        # 把历史 user/assistant 注入为多轮 message(在 system 之后、本次 user 之前)
+        for m in history_messages:
+            role = m.get("role")
+            content = (m.get("content") or "").strip()
+            if not content or role not in ("user", "assistant"):
+                continue
+            if len(content) > 1500:
+                content = content[:1500] + "…(已截断)"
+            messages.append({"role": role, "content": content})
         if has_images:
             # 多模态:OpenAI image_url 协议
             image_parts = [

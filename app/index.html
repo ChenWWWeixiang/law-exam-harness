@@ -142,7 +142,11 @@
 
       <!-- 子页面 1:自由练习 -->
       <div id="practice-free" class="practice-subview">
-        <div id="practice-empty" class="panel muted">尚未选题。<a href="#generate">先去生成题目</a>,或从「历史记录」挑选一道。</div>
+        <div id="practice-empty" class="panel muted">尚未选题。<a href="#generate">先去生成题目</a>,或从「历史记录」挑选一道。
+          <div style="margin-top:10px;">
+            <button id="btn-start-spaced" type="button">🔁 从错题本(自动加入队列)开始</button>
+          </div>
+        </div>
         <div id="practice-area" hidden>
           <div class="panel">
             <div class="meta" id="practice-meta"></div>
@@ -347,6 +351,7 @@
         <button data-tab="sessions" class="tab">聊天</button>
         <button id="btn-refresh-history" type="button" class="muted">刷新</button>
       </div>
+      <div id="mistake-stats-panel" class="panel" hidden></div>
       <div id="history-list" class="panel"></div>
     </section>
 

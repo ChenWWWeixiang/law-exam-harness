@@ -488,10 +488,14 @@ function renderPractice() {
   const q = state.currentQuestion;
   if (!q) { empty.hidden = false; area.hidden = true; return; }
   empty.hidden = true; area.hidden = false;
-  document.getElementById('practice-meta').innerHTML =
+  // 错题复习模式提示
+  const metaEl = document.getElementById('practice-meta');
+  const spacedTag = q._spacedMistake ? '<span class="badge" style="background:#007aff;color:#fff;">🔁 错题复习</span>' : '';
+  metaEl.innerHTML =
     `<span class="badge">${escapeHtml(q.subject || '')}</span>
      <span class="badge">${escapeHtml(q.type || '')}</span>
-     <span class="badge">${escapeHtml(q.difficulty || '')}</span>`;
+     <span class="badge">${escapeHtml(q.difficulty || '')}</span>
+     ${spacedTag}`;
   document.getElementById('practice-stem').innerHTML = renderMarkdownLite(q.stem);
   const optEl = document.getElementById('practice-options');
   if (q.options && q.options.length) {
@@ -501,6 +505,24 @@ function renderPractice() {
   document.getElementById('practice-answer').value = '';
   document.getElementById('practice-feedback').hidden = true;
 }
+
+// "从错题本开始"按钮:拉 spaced queue,如果非空,装载到 currentQuestion + 队列
+document.getElementById('btn-start-spaced').addEventListener('click', async () => {
+  try {
+    const r = await api('GET', '/api/spaced-queue');
+    const items = r.items || [];
+    if (items.length === 0) {
+      toast('错题本里没有勾选「自动加入未来练习」的题', 'info');
+      return;
+    }
+    state._practiceQueue = items.slice(1);
+    state.currentQuestion = items[0];
+    state.currentQuestion._spacedMistake = true;
+    location.hash = '#practice';
+    renderPractice();
+    toast(`已从错题本载入 ${items.length} 道题,作答后会自动置灰`, 'ok');
+  } catch (e) { toast(e.message, 'error'); }
+});
 
 document.getElementById('btn-submit-practice').addEventListener('click', async () => {
   const q = state.currentQuestion;
@@ -518,6 +540,15 @@ document.getElementById('btn-submit-practice').addEventListener('click', async (
       maxScore: 20,
     });
     body.innerHTML = renderFeedback(r.feedback);
+    // 自动置灰提示:如果本次答对且题在 spaced queue 里
+    if (r.autoMarkedMistakes && r.autoMarkedMistakes.length) {
+      toast(`✅ 已自动置灰 ${r.autoMarkedMistakes.length} 条错题(答对)`, 'ok');
+    }
+    // 如果是错题复习模式,做完一题后从 queue 弹出
+    if (q._spacedMistake) {
+      body.insertAdjacentHTML('beforeend',
+        '<p class="muted">🔁 这道题来自错题复习队列;点「下一题」继续。</p>');
+    }
   } catch (e) {
     showError(body, e);
   }
@@ -623,9 +654,57 @@ async function refreshHistory() {
     const r = await api('GET', '/api/history?type=' + encodeURIComponent(state.historyTab));
     list.innerHTML = renderHistory(r.items || [], r.type);
     bindHistoryActions();
+    // 错题 tab:额外加载错题分析面板
+    if (state.historyTab === 'mistakes') await loadMistakeStatsPanel();
   } catch (e) {
     showError(list, e);
   }
+}
+
+async function loadMistakeStatsPanel() {
+  const panel = document.getElementById('mistake-stats-panel');
+  if (!panel) return;
+  try {
+    const r = await api('GET', '/api/mistake-stats');
+    panel.hidden = false;
+    panel.innerHTML = `
+      <h3>📊 错题分析</h3>
+      <div class="exam-score-summary">
+        <div>错题总数 <strong>${r.total}</strong></div>
+        <div>未掌握 <strong style="color:#ff9500;">${r.pending}</strong></div>
+        <div>已掌握 <strong style="color:#34c759;">${r.reviewed}</strong></div>
+        <div>待复习队列 <strong style="color:#007aff;">${r.inSpacedQueue}</strong></div>
+      </div>
+      <div class="grid-3">
+        <div>
+          <h4>按题型</h4>
+          ${renderMistakeBucketTable(r.byType)}
+        </div>
+        <div>
+          <h4>按考点</h4>
+          ${renderMistakeBucketTable(r.byTopic)}
+        </div>
+        <div>
+          <h4>按科目</h4>
+          ${renderMistakeBucketTable(r.bySubject)}
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    panel.innerHTML = `<div class="error">⚠️ ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderMistakeBucketTable(rows) {
+  if (!rows || rows.length === 0) return '<p class="muted">暂无数据</p>';
+  return `<table class="stats-table">
+    <thead><tr><th>项目</th><th>错题数</th><th>未掌握</th></tr></thead>
+    <tbody>${rows.map(r => `<tr>
+      <td>${escapeHtml(r.key)}</td>
+      <td>${r.total}</td>
+      <td><strong style="color:${r.pending > 0 ? '#ff9500' : '#34c759'}">${r.pending}</strong></td>
+    </tr>`).join('')}</tbody>
+  </table>`;
 }
 
 function renderHistory(items, type) {
@@ -648,14 +727,33 @@ function renderHistory(items, type) {
               <button class="btn-detail" data-attempt-id="${escapeHtml(it.id)}">📖 展开完整答卷</button>
               <div class="detail-body" id="detail-${escapeHtml(it.id)}" hidden></div>`;
     } else if (type === 'mistakes') {
-      body = `<div>${escapeHtml(it.reason || '')}</div>
-              <div class="muted">关联题目: ${escapeHtml(it.questionId || '无')}</div>`;
+      // 错题卡片:显示题干 + 元信息 + 重做/auto-add toggle + 删除
+      const stemShort = (it.stem || '(题目已删除)').slice(0, 200);
+      const reviewBadge = it.reviewed
+        ? '<span class="badge" style="background:#34c759;color:#fff;">✓ 已掌握</span>'
+        : '<span class="badge" style="background:#ff9500;color:#fff;">未掌握</span>';
+      const autoChecked = it.autoPractice ? 'checked' : '';
+      const meta = [it.subject, it.topic, it.type, it.difficulty].filter(Boolean).map(escapeHtml).join(' · ');
+      body = `
+        <div class="muted">${meta}</div>
+        <div class="stem">${renderMarkdownLite(stemShort)}${it.stem && it.stem.length > 200 ? '…' : ''}</div>
+        <div>${reviewBadge} ${it.reason ? '<span class="muted">' + escapeHtml(it.reason.slice(0, 100)) + '</span>' : ''}</div>
+        <div class="mistake-meta muted">关联题目: <code>${escapeHtml(it.questionId || '无')}</code> · 关联作答: <code>${escapeHtml(it.attemptId || '无')}</code></div>
+        <div class="detail-body" id="mistake-${escapeHtml(it.id)}" hidden></div>`;
+      actions =
+        `<button class="btn-redo-mistake" data-mistake-id="${escapeHtml(it.id)}" data-question-id="${escapeHtml(it.questionId || '')}">🔁 重做</button>` +
+        `<label class="auto-practice-toggle">
+           <input type="checkbox" class="btn-toggle-auto" data-mistake-id="${escapeHtml(it.id)}" ${autoChecked}/>
+           自动加入未来练习
+         </label>` +
+        ` <button class="btn-del" data-id="${escapeHtml(it.id)}">删除</button>`;
     } else if (type === 'sessions') {
       const msgCount = it.messages ? it.messages.length : 0;
       const firstQ = it.messages && it.messages[0] ? it.messages[0].content.slice(0, 80) : '(空会话)';
       body = `<div class="muted">${msgCount} 条消息 · 科目 ${escapeHtml(it.subject || '')}</div>
               <div><strong>首问:</strong> ${escapeHtml(firstQ)}${firstQ.length >= 80 ? '…' : ''}</div>
               <button class="btn-detail" data-session-id="${escapeHtml(it.id)}">💬 查看完整对话</button>
+              <button class="btn-continue-chat" data-session-id="${escapeHtml(it.id)}">继续聊 ↗</button>
               <div class="detail-body" id="session-${escapeHtml(it.id)}" hidden></div>`;
     }
     return `<article class="hcard" data-id="${escapeHtml(it.id)}">
@@ -732,6 +830,86 @@ function bindHistoryActions() {
       }
     };
   });
+  // 继续聊:从历史会话跳到知识点咨询页,带入历史消息做上下文
+  document.querySelectorAll('.btn-continue-chat').forEach(b => {
+    b.onclick = async () => {
+      const sid = b.dataset.sessionId;
+      b.disabled = true;
+      try {
+        const r = await api('GET', `/api/session/${encodeURIComponent(sid)}`);
+        continueChatFromSession(r.session);
+      } catch (e) { toast(e.message, 'error'); }
+      b.disabled = false;
+    };
+  });
+
+  // 错题 → 重做
+  document.querySelectorAll('.btn-redo-mistake').forEach(b => {
+    b.onclick = async () => {
+      const qid = b.dataset.questionId;
+      if (!qid) { toast('错题没有关联到具体题目,无法重做', 'error'); return; }
+      b.disabled = true;
+      try {
+        const r = await api('GET', `/api/question/${encodeURIComponent(qid)}`);
+        const q = r.question;
+        if (!q) { toast('未找到题目', 'error'); return; }
+        state.currentQuestion = q;
+        state._practiceQueue = [];
+        // 如果是错题本自动加入队列的题,做完会走自动置灰逻辑
+        q._spacedMistake = true;
+        location.hash = '#practice';
+        renderPractice();
+        toast('已载入错题,作答后会自动置灰(若答对)', 'ok');
+      } catch (e) { toast(e.message, 'error'); }
+      b.disabled = false;
+    };
+  });
+  // 错题 → 自动加入未来练习 toggle
+  document.querySelectorAll('.btn-toggle-auto').forEach(b => {
+    b.onchange = async () => {
+      const mid = b.dataset.mistakeId;
+      b.disabled = true;
+      try {
+        const r = await api('POST', `/api/mistake/${encodeURIComponent(mid)}/toggle-auto`, { auto: b.checked });
+        toast(r.autoPractice ? '✅ 已加入未来自由练习队列' : '已关闭自动加入', 'ok');
+        // 同步更新页面顶部的"错题分析"统计(如果已渲染)
+        if (state.historyTab === 'mistakes') await loadMistakeStatsPanel();
+      } catch (e) { toast(e.message, 'error'); b.checked = !b.checked; }
+      b.disabled = false;
+    };
+  });
+}
+
+function continueChatFromSession(s) {
+  if (!s) return;
+  // 1) 切到 explain 视图
+  state.conversationId = s.id;
+  // 2) 把历史消息渲染到 explain-output
+  const out = document.getElementById('explain-output');
+  const msgs = s.messages || [];
+  if (msgs.length === 0) {
+    out.innerHTML = '<p class="muted">(该会话无消息历史)</p>';
+  } else {
+    out.innerHTML = renderSessionDetail(s);
+  }
+  // 3) 把"科目"带上,样式保留默认"法考应试角度"
+  const form = document.getElementById('form-explain');
+  if (form && s.subject) {
+    const opts = Array.from(form.subject.options).map(o => o.value);
+    if (opts.includes(s.subject)) form.subject.value = s.subject;
+  }
+  // 4) 清空主问题框(避免误把上次问题再发一次)
+  if (form) form.question.value = '';
+  // 5) 跳视图
+  location.hash = '#explain';
+  showView('explain');
+  // 6) 聚焦到追问框
+  const followup = document.getElementById('form-explain-followup');
+  if (followup) {
+    followup.question.value = '';
+    followup.question.focus();
+  }
+  toast(`已加载 ${msgs.length} 条历史消息,基于此会话继续`, 'ok');
 }
 
 function renderSessionDetail(s) {

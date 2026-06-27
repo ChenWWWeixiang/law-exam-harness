@@ -374,24 +374,67 @@ def append_mistake(mistake: dict) -> None:
     now = mistake.get("addedAt") or _now()
     with _db() as conn:
         conn.execute("""
-            INSERT OR REPLACE INTO mistakes(id, attempt_id, reason, reviewed, added_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO mistakes(id, attempt_id, reason, reviewed, auto_practice, added_at)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, (
             mid,
             mistake["attemptId"] or mistake["attempt_id"],
             mistake.get("reason", ""),
             1 if mistake.get("reviewed") else 0,
+            1 if mistake.get("autoPractice") or mistake.get("auto_practice") else 0,
             now,
         ))
 
 
-def list_mistakes() -> list[dict]:
-    """返回错题列表(含关联 attempt 摘要)。"""
+def set_mistake_auto_practice(mistake_id: str, auto: bool) -> bool:
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE mistakes SET auto_practice = ? WHERE id = ?",
+            (1 if auto else 0, mistake_id),
+        )
+        return cur.rowcount > 0
+
+
+def mark_mistake_reviewed(mistake_id: str) -> bool:
+    """答对时把对应错题置灰(reviewed=1,从 spaced queue 移除)。"""
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE mistakes SET reviewed = 1 WHERE id = ?",
+            (mistake_id,),
+        )
+        return cur.rowcount > 0
+
+
+def mark_mistake_reviewed_if_in_queue(question_id: str) -> list[str]:
+    """如果该题在 spaced queue(auto_practice=1 且 reviewed=0)里,标为 reviewed。
+    返回被置灰的 mistake id 列表(便于前端提示)。
+    """
+    if not question_id:
+        return []
     with _db() as conn:
         rows = conn.execute("""
-            SELECT m.id, m.attempt_id, m.reason, m.reviewed, m.added_at,
-                   a.question_id, a.user_answer, a.score, a.max_score, a.submitted_at,
-                   q.subject AS q_subject, q.stem AS q_stem
+            SELECT m.id FROM mistakes m
+            JOIN attempts a ON a.id = m.attempt_id
+            WHERE a.question_id = ? AND m.auto_practice = 1 AND m.reviewed = 0
+        """, (question_id,)).fetchall()
+        ids = [r["id"] for r in rows]
+        if ids:
+            placeholders = ",".join("?" * len(ids))
+            conn.execute(
+                f"UPDATE mistakes SET reviewed = 1 WHERE id IN ({placeholders})",
+                ids,
+            )
+        return ids
+
+
+def list_mistakes() -> list[dict]:
+    """返回错题列表(含关联 attempt 摘要 + 错题题目的 topic/subject)。"""
+    with _db() as conn:
+        rows = conn.execute("""
+            SELECT m.id, m.attempt_id, m.reason, m.reviewed, m.auto_practice, m.added_at,
+                   a.question_id, a.user_answer, a.score, a.max_score, a.submitted_at, a.is_correct,
+                   q.subject AS q_subject, q.topic AS q_topic, q.type AS q_type,
+                   q.difficulty AS q_difficulty, q.stem AS q_stem
             FROM mistakes m
             JOIN attempts a ON a.id = m.attempt_id
             LEFT JOIN questions q ON q.id = a.question_id
@@ -404,13 +447,119 @@ def list_mistakes() -> list[dict]:
             "addedAt": r["added_at"],
             "reason": r["reason"],
             "reviewed": bool(r["reviewed"]),
+            "autoPractice": bool(r["auto_practice"]),
             "userAnswer": r["user_answer"],
             "score": r["score"],
             "maxScore": r["max_score"],
+            "isCorrect": bool(r["is_correct"]),
             "answeredAt": r["submitted_at"],
             "subject": r["q_subject"],
+            "topic": r["q_topic"],
+            "type": r["q_type"],
+            "difficulty": r["q_difficulty"],
             "stem": r["q_stem"],
         } for r in rows]
+
+
+def list_spaced_practice_queue(limit: int = 10) -> list[dict]:
+    """返回开启了"自动加入未来练习"且未掌握的错题对应的题目详情(用于自由练习时混插)。"""
+    with _db() as conn:
+        rows = conn.execute("""
+            SELECT q.id, q.subject, q.topic, q.type, q.difficulty, q.stem,
+                   q.options_json, q.answer, q.explanation,
+                   m.id AS mistake_id
+            FROM mistakes m
+            JOIN attempts a ON a.id = m.attempt_id
+            JOIN questions q ON q.id = a.question_id
+            WHERE m.auto_practice = 1 AND m.reviewed = 0
+            ORDER BY m.added_at ASC
+            LIMIT ?
+        """, (limit,)).fetchall()
+        out = []
+        for r in rows:
+            out.append({
+                "id": r["id"],
+                "subject": r["subject"],
+                "topic": r["topic"],
+                "type": r["type"],
+                "difficulty": r["difficulty"],
+                "stem": r["stem"],
+                "options": jload(r["options_json"], []),
+                "answer": r["answer"],
+                "explanation": r["explanation"],
+                "_spaced": True,
+                "_mistakeId": r["mistake_id"],
+            })
+        return out
+
+
+def mistake_stats() -> dict:
+    """错题三维度统计:题型 / 考点 / 科目(基于错题对应题目的属性)。"""
+    with _db() as conn:
+        rows = conn.execute("""
+            SELECT m.reviewed, m.auto_practice,
+                   q.subject AS q_subject, q.topic AS q_topic, q.type AS q_type,
+                   a.is_correct AS last_correct
+            FROM mistakes m
+            JOIN attempts a ON a.id = m.attempt_id
+            LEFT JOIN questions q ON q.id = a.question_id
+        """).fetchall()
+        total = len(rows)
+        reviewed = sum(1 for r in rows if r["reviewed"])
+        in_queue = sum(1 for r in rows if r["auto_practice"] and not r["reviewed"])
+
+        def bucket(key_fn):
+            b: dict[str, dict] = {}
+            for r in rows:
+                k = key_fn(r["q_type"], r["q_topic"], r["q_subject"])
+                if not k:
+                    k = "未分类"
+                bb = b.setdefault(k, {"total": 0, "reviewed": 0})
+                bb["total"] += 1
+                if r["reviewed"]:
+                    bb["reviewed"] += 1
+            return [{
+                "key": k,
+                "total": v["total"],
+                "reviewed": v["reviewed"],
+                "pending": v["total"] - v["reviewed"],
+            } for k, v in b.items()]
+
+        return {
+            "total": total,
+            "reviewed": reviewed,
+            "pending": total - reviewed,
+            "inSpacedQueue": in_queue,
+            "byType": sorted(bucket(lambda t, _, __: t), key=lambda x: -x["total"]),
+            "byTopic": sorted(bucket(lambda _, tp, __: tp or "未分类"), key=lambda x: -x["total"]),
+            "bySubject": sorted(bucket(lambda _, __, sb: sb or "未分类"), key=lambda x: -x["total"]),
+        }
+
+
+def mistake_question_summaries_for_dedup(subject: str, topic: str, limit: int = 30) -> list[str]:
+    """错题对应题目的题干摘要,用于生成时避开类似题。匹配规则:同 subject+topic 优先,再补同 topic。"""
+    with _db() as conn:
+        # 1) 同 subject + topic
+        rows = conn.execute("""
+            SELECT q.stem FROM mistakes m
+            JOIN attempts a ON a.id = m.attempt_id
+            JOIN questions q ON q.id = a.question_id
+            WHERE q.subject = ? AND q.topic = ?
+            ORDER BY m.added_at DESC LIMIT ?
+        """, (subject, topic, limit)).fetchall()
+        stems = [r["stem"][:120] for r in rows]
+        if len(stems) >= 5:
+            return stems
+        # 2) 补同 topic(不限 subject)
+        rows = conn.execute("""
+            SELECT q.stem FROM mistakes m
+            JOIN attempts a ON a.id = m.attempt_id
+            JOIN questions q ON q.id = a.question_id
+            WHERE q.topic = ? AND NOT (q.subject = ? AND q.topic = ?)
+            ORDER BY m.added_at DESC LIMIT ?
+        """, (topic, subject, topic, limit - len(stems))).fetchall()
+        stems.extend(r["stem"][:120] for r in rows)
+        return stems
 
 
 # ---- 试卷 ----

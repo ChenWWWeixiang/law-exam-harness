@@ -28,7 +28,7 @@ LEGACY_JSON_FILES = {
     "exam_attempts": DATA_DIR / "exam_attempts.json",
 }
 
-CURRENT_SCHEMA_VERSION = "1"
+CURRENT_SCHEMA_VERSION = "2"
 
 
 # ---- Schema 定义 ----
@@ -105,11 +105,12 @@ CREATE INDEX IF NOT EXISTS idx_att_question ON attempts(question_id);
 CREATE INDEX IF NOT EXISTS idx_att_mode_submitted ON attempts(mode, submitted_at);
 
 CREATE TABLE IF NOT EXISTS mistakes (
-    id         TEXT PRIMARY KEY,
-    attempt_id TEXT NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
-    reason     TEXT,
-    reviewed   INTEGER NOT NULL DEFAULT 0,
-    added_at   TEXT NOT NULL
+    id             TEXT PRIMARY KEY,
+    attempt_id     TEXT NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
+    reason         TEXT,
+    reviewed       INTEGER NOT NULL DEFAULT 0,
+    auto_practice  INTEGER NOT NULL DEFAULT 0,
+    added_at       TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_mistake_attempt ON mistakes(attempt_id);
@@ -152,10 +153,14 @@ def get_conn() -> sqlite3.Connection:
 
 
 def init_schema() -> None:
-    """启动时调用:建表 + 检查 schema_version。"""
+    """启动时调用:建表 + 检查 schema_version,处理老库增量迁移。"""
     conn = _connect()
     try:
         conn.executescript(SCHEMA_SQL)
+        # ---- 增量迁移:老库缺列时补上 ----
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(mistakes)").fetchall()}
+        if "auto_practice" not in cols:
+            conn.execute("ALTER TABLE mistakes ADD COLUMN auto_practice INTEGER NOT NULL DEFAULT 0")
         # 写 schema_version
         conn.execute(
             "INSERT OR REPLACE INTO schema_meta(key, value) VALUES('schema_version', ?)",
